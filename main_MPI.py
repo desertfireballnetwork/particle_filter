@@ -1,0 +1,1312 @@
+#!/usr/bin/env python
+"""
+=============== Meteoroid Trajectory Analysis ===============
+============ using a bootstrap particle filter ==============
+
+Created on Mon Jul 16 2017
+@author: Eleanor Kate Sansom
+
+Uses particle filter methodology outlined in Arulampalam et al.
+(2002) -- A tutorial on particle filters for online nonlinear/
+non-Gaussian Bayesian tracking (doi: 10.1109/78.978374).
+
+
+## Requirements:
+- From Triangulation folder: trajectory_utilities.py, 
+                             dfn_utils.py
+- From Brightflight folder: bf_functions_3d.py, 
+                            ballistic_params.py
+- From Brightflight/particle_filters folder: nrlmsise_00.py, 
+                                             nrlmsise_00_data.py, 
+                                             nrlmsise_00_header.py
+## Running the program:
+run in commandline as 
+$ mpirun -n <#nodes> python main_MPI.py <userinputs>
+
+There are three run options depending on combination of data 
+available. 
+(1) 1D particle filter:            1D analysis on a single, 
+                                   pre-triangulated trajectory 
+                                   file with X_geo, Y_geo and 
+                                   Z_geo information.
+
+(2) 3D particle filter, cartesian: 3D analysis on single or 
+                                   multiple pre-triangulated 
+                                   files with X_geo, Y_geo and 
+                                   Z_geo information.
+
+(3) 3D particle filter, rays:      3D analysis on calibrated 
+                                   astrometric observations 
+                                   (altitude and azimuth data 
+                                   required) 
+
+Inputs: required:
+        -i --dimension: select from (1) (2) or (3) described 
+             above.
+        -d --inputdirectory: input directory of folder 
+             containing files with extension .ecsv
+        -p --numparts: number of particles to run, testing run 
+             100; quick run try 1000; good run try 10,000; 
+             magnus 100,000+
+        
+        optional:
+        -m --mass_option: Specify how you would like entry masses 
+             to be initiated. (1) calculated using ballistic 
+             coefficient in metadata; (2) using random logarithmic 
+             distribution; (3) random uniform distribution. 
+             Default is 3
+        -s --pse: specify if you would like to use exclusively 
+             start (S) or end (E) points, or use both (B). 
+             Default uses ends
+        -l --luminosity_weighting:  weighting for luminosity
+        -M0 --m0_max: if using -m 2 or 3, specify a maximum 
+              initial mass. Default is 2000",default=2000.)
+        -c --comment: add a version name to appear in saved 
+             file titles. If unspecified, _testing_ is used.
+        -k --save_kml: save observation rays as kmls
+        -o --old: previous .fits file
+        
+        to be tested:
+        -f --fragment: If this is a fragment run, it will 
+             increase covariance values at the specified 
+             times given by -t option
+        -t --fragment_start: If this is a fragment run, give  
+             starting time (seconds in UTC, not event relative)
+        
+
+Output: HDU table fits file. 
+        HDU table[0] is the primary and holds information on 
+        all other indices and does not contain data
+        access this info using table.info(). 
+        See http://docs.astropy.org/en/stable/io/fits/ 
+        for more info. 
+
+        Table at each time step is saved as a new index in HDU 
+        table. 
+        access last timestep table using table[-1].data
+
+        Each table is in the format:
+        #-------------------------------------------------------
+        # column index KEY:
+        # 0:  X_geo
+        # 1:  Y_geo
+        # 2:  Z_geo
+        # 3:  X_geo_DT:   x vel
+        # 4:  Y_geo_DT:   y vel
+        # 5:  Z_geo_DT:   z vel
+        # 6:  mass
+        # 7:  cd:         drag coefficient
+        # 8:  A:          shape coefficient
+        # 9:  kappa:      shape-density coefficient, 
+                          = cd * A / density^(2/3)
+        # 10: sigma:      ablation coefficient
+        # 11: M_v:        Visual magnitude
+        # 12: tau:        luminous efficiency parameter
+        # 13: Q_x:        covariance for X_geo
+        # 14: Q_y:        covariance for Y_geo
+        # 15: Q_z:        covariance for Z_geo
+        # 16: Q_vel_x:    covariance for X_geo_DT
+        # 17: Q_vel_y:    covariance for Y_geo_DT
+        # 18: Q_vel_z:    covariance for Z_geo_DT
+        # 19: Q_m:        covariance for mass
+        # 20: empty
+        # 21: empty
+        # 22: Q_k:        covariance for kappa
+        # 23: Q_s:        covariance for sigma
+        # 24: Q_bright:   covariance for M_v
+        # 25: Q_tau:      covariance for tau
+        # 26: rho:        density. 
+              Previously has been attributed to luminous 
+              weighting and flight angle gamma
+        # 27: parent_index: particle index of parent particle 
+                            from t_k-1
+        # 28: orig_index:   index of particle at t_0 where 
+                            this particle was originally derived
+        # 29: weight
+        # 30: D_DT:         magnitude of velocity vector: 
+                            norm(vel_x, vel_y, vel_z)
+        # 31: latitude:     latitude of particle
+        # 32: longitude:    longitude of particle
+        # 33: height:       height of particle
+        # 34: lum_weight:   luminous weighting
+        # 35: pos_weight:   position weighting
+
+        additional columns include time (relative to event t0)
+        and datetime
+
+
+    Still TODO:
+    - incoming errors for 3D cartesian is fixed at 50m. 
+    - incoming errors for rays are currently taken from table 
+      but I believe they are too small. There is a section on line
+    - in initialise function (in imported dim file), correlation 
+      between shape and drag is a magic equation I invented
+    - Intensity calculation - there are 3 ways of doing it?
+    - 1D pf errors are being set within the weightinf function 
+      rather than being passed from inputs
+
+
+
+
+"""
+
+# import modules
+
+# general
+from math import *
+import copy, operator, random, time
+import sys, os, argparse, glob
+import contextlib
+
+# science
+import numpy as np
+import scipy 
+import scipy.integrate
+
+# Astropy
+from astropy.table import Table, Column, join, hstack
+import astropy.units as u
+from astropy.io import fits
+from astropy.time import Time
+
+# own
+import bf_functions_3d as bf
+from nrlmsise_00_header import *
+from nrlmsise_00 import *
+import dfn_utils 
+
+#import multiprocessing
+from mpi4py import MPI
+
+
+def ParticleFilterParams():
+    """ returns particle filter function parameters. 
+        Q_c:      covariance vector
+        Q_c_frag: covariance vector if there is a fragmentation event 
+                  (higher for mass and vels)
+        P:        initial uncertainty in parameters (position and velocity only)
+        range_params: other dynamic equation parameter ranges for initiation of 
+                      particles
+
+    """
+    ## Particle filter parameters
+
+    ## Q_c is the time continuous covariance matrix. This should be the errors in the 
+    ## model. I still havent worked out these values
+    ## Q_c_frag is the error at reinitialisation if the fragmentation option is used
+    ## in the form [x_cov, y_cov, z_cov, 
+    ##              vel_x_cov, vel_y_co, vel_z_cov, ****all vel covs as a %age of vel component***
+    ##              mass_cov,                       ****mass_cov as a %age of total mass***
+    ##              sigma_cov, shape_cov, brightness_cov, tau_cov]
+    
+    # Q_c = [0., 0., 0.,
+    #    0.005, 0.005, 0.005,
+    #    0.4, 0., 0.,
+    #    1e-4, 1e-10, 0., 0.0001]
+    Q_c = [2., 2., 2., 
+           50., 50., 50., 
+           5., 0, 0,
+           1e-3, 1e-10, 0., 0.0001]
+
+
+    # Q_c = [0., 0., 0., 
+    #        0.008, 0.008, 0.008, 
+    #        .4, 0, 0,
+    #        1e-4, 1e-10, 0., 0.0001]
+
+    # Q_c = [0., 0., 0., 
+    #        0.01, 0.01, 0.01, 
+    #        0.4, 0., 0.,
+    #        1e-4, 1e-10, 0., 0.0001]
+    print('Qc values used:', Q_c)
+
+    Q_c = np.asarray([i**2 for i in Q_c])
+
+    Q_c_frag = [0., 0., 0., 
+                0.02, 0.02, 0.02, 
+                0.5,  0, 0,
+                2e-3, 5e-9, 0., 0.]
+
+    Q_c_frag = [i**2 for i in Q_c_frag]
+
+    ## starting error to initialise gaussian spread of particals. P2 is the initial
+    ## starting error at reinitialisation if the fragmentation option is used
+    ## in the form [x_cov, y_cov, z_cov, % of vel_x_cov, % of vel_y_co, % of  vel_z_cov]
+    P = [50., 50., 50., 250., 250., 250.]
+
+
+    ## Initialise state ranges
+
+    ## maximum initial mass
+    #m0_max = 2000.
+    #m0_min = 0.5
+
+    ## shape parameter close to a rounded brick (1.8) (A for a sphere =1.21)
+    A_min = 1.21
+    A_max = 3.0    
+    #A_mean = 1.4
+    #A_std = .33
+
+    ## luminosity coefficient
+    tau_min = 0.0001
+    tau_max = 0.1
+
+    ## lists of typical meteorite densities for different types. [chond, achond, stony-iron, iron, cometary]
+    pm_mean = [3000, 3100, 4500, 7500, 850]
+    pm_std = [420, 133, 133,  167, 117 ]
+
+    ## to choose density values according to a distribution of meteorite percentages:
+    particle_choices = []
+
+    # this is created using lines 228-228; uncomment if needs changing.
+    random_meteor_type = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 4, 4]
+
+    #random_meteor_type = []
+    #for i in range(80):                 # 80 % Chondrites
+    #   random_meteor_type.append(0)
+    #for i in range(11):                 # 11 % Achondrites
+    #   random_meteor_type.append(1)
+    #for i in range(2):
+    #   random_meteor_type.append(2)   # 2 % Stony-Iron
+    #for i in range(5):
+    #   random_meteor_type.append(3)   # 5 % iron
+    #for i in range(2):
+    #   random_meteor_type.append(4)   # 2 % cometary
+
+    ## drag coefficients. Values really not well constrained!
+    #cd_mean = 1.3
+    #cd_std = 0.3
+
+    ## ablation coefficeint 
+    #sigma_min = 0.001*1e-6
+    #sigma_max = 0.5*1e-6
+
+
+    ## shape density coeficient sensible values:
+    #K_min = (0.6*1.21)/ 1000**(2/3.)
+    #K_max = (1.8*4)/ 7000**(2/3.)
+
+
+    #range_params = [m0_max, A_mean, A_std, pm_mean, pm_std, random_meteor_type, cd_mean, cd_std, sigma_min, sigma_max, K_min, K_max, tau_min, tau_max]
+    range_params = [A_min, A_max, pm_mean, pm_std, random_meteor_type, tau_min, tau_max]
+
+    return Q_c, Q_c_frag, P,  range_params
+
+if __name__ == '__main__':
+
+    # Define MPI message tags
+    READY, START, DONE, EXIT = 0, 1, 2, 3
+    # Initializations and preliminaries
+    comm = MPI.COMM_WORLD   # get MPI communicator object
+    size = comm.size        # total number of processes
+    rank = comm.Get_rank()        # rank of this process
+    status = MPI.Status()   # get MPI status object
+
+
+    if rank ==0:
+        parser = argparse.ArgumentParser(description='Run particle filter on raw camera files.')
+        #inputgroup = parser.add_mutually_exclusive_group(required=True)
+        parser.add_argument("-d","--inputdirectory",type=str,
+                help="input directory of folder containing triangulated files with extension .ecsv", required=True)
+        parser.add_argument("-p","--numparts",type=int,
+                help="number of particles to run. Must be an integer.", required=True)
+        parser.add_argument("-i","--dimension",type=int,
+                help="would you like to run \n(1) 1D analysis on a single, pre-triangulated trajectory file, \n(2) 3D analysis on multiple pre-triangulated files, \n(3) 3D analysis on calibrated raw observations in ECEF, \n(4) 3D analysis on pointwise data, or \n(5) 3D analysis on calibrated raw observations in ECI?",required=True)
+        parser.add_argument("-c","--comment",type=str,
+                help="add a version name to appear in saved file titles. If unspecified, _testing_ is used.",default='testing')
+        parser.add_argument("-f","--fragment",action="store_true",
+                help="If this is a fragment run",default=False)
+        parser.add_argument("-t","--fragment_start",type=float, nargs='+',
+                help="If this is a fragment run, give starting time (seconds in UTC, not event relative)",default=[])  
+        parser.add_argument("-k","--save_kml",action="store_true",
+                help="save observation kmls?",default=False)
+        parser.add_argument("-s","--pse",type=str,
+                help="use start or end points? Type S or E or B for both. Default uses both",default='B')
+        parser.add_argument("-m","--mass_option",type=int,
+                help="initial masses to be calculated using ballistic coefficient -- 1; using random logarithmic distribution --2; random uniform distribution --3. Default is 3",default=3)
+        parser.add_argument("-M0","--m0_max",type=float,
+                help="if using -m 2 or 3, specify a maximum initial mass. Default is 2000",default=2000.)
+        #parser.add_argument("-a","--alpha",type=int,
+        #        help="specify a camera number to use alpha values from. Default will be the smallest number. Numbers only, eg. DFNSMALL_25, -a 25",default=0)
+        parser.add_argument("-o","--old",type=str,
+                help="previous .fits file",default='')
+        parser.add_argument("-l","--luminosity_weighting",type=float,
+                help="weighting for luminosity",default=0.)
+        parser.add_argument("-r","--time_reverse",action="store_true",
+                help="would you like to run in reverse?",default=False)
+        #parser.add_argument("-a","--alpha",type=int,
+
+        args = parser.parse_args()   
+
+        dim = int(args.dimension)
+        #alpha_cam = int(args.alpha)
+        mass_opt = int(args.mass_option)
+        m0_max = float(args.m0_max)
+        prev_file = args.old
+        reverse = args.time_reverse
+
+        import trajectory_utilities as tu
+
+        if dim==1:
+            import geo_1d as df
+        elif dim==2 or dim==4:
+            import geo_3d as df
+        # elif dim == 4:
+        #     import geo_3d_eci as df
+        elif dim==3:
+            import full_3d_ECEF as df
+        elif dim==5:
+            import full_3d_ECI as df
+
+        # number of particles
+        num_parts = args.numparts
+
+        # how is initial mass going to be initiated?
+        mass_opt = int(args.mass_option)
+        
+        # what is max initial mass if using mass opt 2 or 3
+        m0_max = float(args.m0_max)
+
+        # are we reloading an old run that terminated early?
+        prev_file = args.old
+
+        # not sure fragment runs work yet.
+        if args.fragment and not args.fragment_start:
+            print("if you're running fragments, you need a fragmentation time also. see -help")
+            sys.exit() 
+
+        # fragment run?
+        fragmentation = args.fragment
+
+        # times of defined fragmentation times
+        t_frag = args.fragment_start
+
+        # save observation rays as kml?
+        kmls = args.save_kml
+        if dim==4:
+            kmls = False
+        
+        # use start/end points or both?
+        if args.pse == 'S' or args.pse == 's':
+            pse = 'S' 
+        elif args.pse == 'E' or args.pse == 'e':
+            pse = 'E'
+        elif args.pse == 'B' or args.pse == 'b':
+            pse = 'both'
+        else:
+            print('-s input invalid, running with ends')
+            pse = 'E'
+
+        # weighting of luminosity observations
+        lum_weighting_coef = args.luminosity_weighting
+
+        # output name defined by inputs
+        lum_str = '%.2f' % lum_weighting_coef
+        lum_str = lum_str.replace('.', 'p')
+        version = 'testing_' + str(dim) +'d_'+ pse + '_' + lum_str if args.comment == '' else '_' + args.comment + '_' + str(dim) + 'd_' + pse + '_' + lum_str
+        
+        ## check if the input directory given exists and pull all ecsv files, and extract data
+        if (os.path.isdir(args.inputdirectory)):
+            working_dir = args.inputdirectory
+            
+            # list all altaz files in this directory
+            all_ecsv_files = glob.glob(os.path.join(working_dir,"*.ecsv"))
+            ecsv = [f for f in all_ecsv_files if '_CUT' not in f]
+            #ecsv = [f for f in all_ecsv_files if 'CUT_TOP' in f]
+            #ecsv = [f for f in all_ecsv_files if 'CUT_BO' in f]
+            filenames = []
+
+            # check if ecsv files have times and use only those that do
+            if dim == 4:
+                for f in ecsv:
+                    if "LeastSquare" in f:
+                        filenames = str(f)
+                    else:
+                        print(f, 'is not a LeastSquare triangulated file')
+            else:
+                for f in ecsv:
+                    if "notime" not in f and "LeastSquare" not in f:
+                        filenames.append(str(f))
+                    else:
+                        print(f, 'does not contain timing data and will not be used')
+
+            n_obs = len(filenames)
+            print(filenames, n_obs)
+
+            ## get data depending on particle filter flavour
+            # 1D filter:
+            if dim == 1:
+                [data, date_info] = bf.DFS_Fireball_Data(filenames, pse, reverse)
+
+                x0 = data['dist_from_start'][0]
+                v0 = data['D_DT'][1]    # currently first data point has a nan velocity, so use second as close approximation.
+                out_name = data['datetime'][0].split('T')[0].replace('-','') + '_1D'
+
+            else:
+                
+                if dim==2 or dim==4:   # 3D cartesian 
+                    ## t0 is start of filter, T0 is start of fireball
+
+                    if dim==2:
+                        data, t0, T0, eci_bool = bf.Geo_Fireball_Data(filenames, pse, reverse)
+                        out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Dtriangulated'
+                        # if n_obs>1:  
+                        #     [x0, v0, x0_err, v0_err, date_info] = bf.RoughTriangulation(data, t0, reverse, eci_bool)
+                        #     if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
+                        #     else: date_info = np.append(date_info, T0)
+                        # else:
+                    
+                        yday = T0.yday.split(':')
+                        y = float(yday[0])
+                        d = float(yday[1])
+                        s = float(yday[2]) * 60 * 60 + float(yday[3]) * 60 + float(yday[4])
+                        t_stack = np.vstack((y, d, s))
+                        data.sort('time')    
+
+                        if 'X_eci' in data.colnames:
+                            print('ECI')
+                            [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
+                                                   [(data['X_eci'][3] - data['X_eci'][0])/(data['time'][3] - data['time'][0]),
+                                                    (data['Y_eci'][3] - data['Y_eci'][0])/(data['time'][3] - data['time'][0]),
+                                                    (data['Z_eci'][3] - data['Z_eci'][0])/(data['time'][3] - data['time'][0])],
+                                                   t_stack]
+                        else:
+                            print('ECEF')
+                            [x0, v0, date_info] = [[data['X_geo'][0], data['Y_geo'][0], data['Z_geo'][0]],
+                                                   [(data['X_geo'][3] - data['X_geo'][0])/(data['time'][3] - data['time'][0]),
+                                                    (data['Y_geo'][3] - data['Y_geo'][0])/(data['time'][3] - data['time'][0]),
+                                                    (data['Z_geo'][3] - data['Z_geo'][0])/(data['time'][3] - data['time'][0])],
+                                                   t_stack]
+                        
+                        if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
+                        else: date_info = np.append(date_info, T0)
+
+                    if dim==4: 
+
+                        data, t0, T0, eci_bool = bf.Geo_Fireball_Data_newtriang(filenames, pse, reverse)
+                        
+                        yday = T0.yday.split(':')
+                        y = float(yday[0])
+                        d = float(yday[1])
+                        s = float(yday[2]) * 60 * 60 + float(yday[3]) * 60 + float(yday[4])
+                        t_stack = np.vstack((y, d, s))
+                        # data.sort('time')    
+                        # if reverse:
+                        #     data.reverse()
+
+                        out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Dtriangulated'
+                        [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
+                                               [data['DX_DT_eci'][0], data['DY_DT_eci'][0], data['DZ_DT_eci'][0]],
+                                                t_stack]
+
+                        if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
+                        else: date_info = np.append(date_info, T0)
+
+                elif dim==3 or dim==5:  # 3D rays
+                    if n_obs>1:
+                        ## t0 is start of filter, T0 is start of fireball
+                        data, t0, T0, eci_bool = bf.Geo_Fireball_Data(filenames, pse, reverse)
+                        out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Draw'
+                        
+                        data.sort('time')    
+                        if reverse:
+                            data.reverse()
+                        [x0, v0, x0_err, v0_err, date_info] = bf.RoughTriangulation(data, t0, reverse, eci_bool)
+
+                        data.sort('time')    
+                        if reverse:
+                            data.reverse()
+                        if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
+                        else: date_info = np.append(date_info, T0)
+
+                    else: 
+                        print('you need at least two camera files for your choice of -i option.')
+                        exit(1)
+                else:
+                    print('invalid dimension key -i')
+                    exit(1)
+
+                
+            ## define list of unique timesteps and their locations in data table
+            data.sort('time')    
+            if reverse:
+                data.reverse()
+
+            data_times = data['time']
+
+            data_t = np.array([[float(data_times[0])], [str(data['datetime'][0])], [int(0)]])
+            for i in range(1, len(data_times)):
+                if data_times[i] != float(data_t[0, -1]):
+                        data_t = np.hstack((data_t, [[float(data_times[i])], [str(data['datetime'][i])], [int(i)]]))
+            # print(data[0], data[-1], x0, np.linalg.norm(v0))
+
+        else:
+            print('not a valid input directory')
+            exit(1)
+
+       
+        ## distinguish between fragmentation filter runs and simple run, create output directory.
+        if fragmentation:
+            print('this will be a fragmentation run')
+            # create output directory
+            out_name = out_name + "_frag_"
+
+            if not os.path.exists(os.path.join(working_dir ,"outputs", out_name)):
+                os.makedirs(os.path.join(working_dir ,"outputs", out_name))
+
+            ## save times given for fragmentation events 
+            #  and adds an extra index at the end which is beyond last iteration 
+            #  so line 588 if statement will work after frag event has happened.
+            for i in range(len(t_frag)+1):
+                if i<len(t_frag):
+                    t_frag[i] = (np.abs(np.array(float(data_t[0, :]))-t_frag[i])).argmin()
+                else:
+                    t_frag = np.hstack([t_frag, len(data_t[0, :])+1])
+            print(t_frag)
+        else:
+            ## create output directory
+            if not os.path.exists(os.path.join(working_dir,"outputs",out_name)):
+                os.makedirs(os.path.join(working_dir,"outputs",out_name))
+
+            ## no fragmentation times are given
+            t_frag = [len(data_t[0])+1]
+
+        ## save raw data for visualisation after
+        if eci_bool:
+            eci_name = 'eci'
+        else:
+            eci_name = 'ecef'
+
+        name= os.path.join(working_dir ,"outputs", out_name, out_name +version +'_' + eci_name + '_mass'+ str(mass_opt) + '_inputdata.csv')
+        data.write(name, format='ascii.csv', delimiter=',')
+        
+        ## save kmls of observation vectors from all cameras
+        if kmls:
+            bf.RawData2KML(filenames, pse)
+            bf.RawData2ECEF(filenames, pse)
+        
+        ## defining number of particles to run
+        n = int(num_parts/(comm.size)) +1              # number of particles for each worker to use
+        N = n * comm.size                            # total number of particles (n*24)
+
+        ## info to share with ranks:
+        T = len(data_t[0])      # number of timesteps
+        p_all = np.empty([N, 42])
+        
+        ## empy space for effectiveness array
+        n_eff_all = np.zeros(T)  # empy space for effectiveness array
+        f = 0                     # index of fragmentation event (incremented in frag section at end of function) 
+        l_weight = False        # if low weright, use fragmentation scattering
+
+        [Q_c, Q_c_frag, P,  range_params] = ParticleFilterParams()
+        ## grouping everything to send
+        alpha = data['alpha'][0]
+        init_info = [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name]
+    
+        print('yeahnah', eci_bool)
+        ## send it all ranks
+        for i in range(1, size):
+            comm.send(init_info, dest = i)
+
+    else:
+        [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name] = comm.recv(source=0)
+        if dim == 1:
+            import geo_1d as df
+        elif dim == 2 or dim == 4:
+            import geo_3d as df
+        elif dim == 3:
+            import full_3d_ECEF as df
+        elif dim == 5:
+            import full_3d_ECI as df
+        import trajectory_utilities as tu
+
+        [Q_c, Q_c_frag, P,  range_params] = ParticleFilterParams()
+
+        p_all = None
+
+
+    #########################################################
+    ## all ranks get an empty working array
+
+    p_working = np.empty([n, 42])#, dtype='O')  
+  
+    comm.Barrier()
+    #---------------------------------------------------------
+    # SIS Particle filter
+    #---------------------------------------------------------
+    ################# Step 1 - Initialisaton #################
+    ## master scatters initial empty array to all ranks to be filled for t0
+
+    comm.Scatterv(p_all, p_working, root=0)
+
+    for i in range(n):
+        p_working[i, :] = df.Initialise(x0, v0, rank+i, rank+i, N, P, range_params, alpha, date_info, mass_opt, m0_max, data['gamma'][0], eci_bool)
+
+    comm.Gatherv( p_working, p_all, root=0)
+    
+    comm.Barrier()
+
+    ##############  Master saves initial timestep  ###########
+    if rank ==0:
+        # if -o option used, this overwrites table just initialised with previous file given
+        # p_all = np.empty([N, 42])#, dtype='O')  
+
+        if prev_file != '':                 
+            name  = prev_file
+            results_list = fits.open(prev_file)
+
+            name_end = prev_file.replace(".fits", "_end.fits")
+            results_prev_open = fits.open(name_end)
+
+            results_prev = results_prev_open[1].data      #results_prev = results_list[-1].data
+
+            temp_time = [float(x) for x in data_t[0]]
+            t0 =    (np.abs(temp_time-results_prev['time'][0])).argmin() +1
+
+            results_prev = Table(results_prev)
+            results_prev.remove_columns(['datetime', 'time'])
+            # print('len', N, len(results_prev))
+            # print(results_prev)
+            for i in range(len(results_prev)):
+                # print(i)
+                # print('this', np.asarray(results_prev[i]))
+                p_all[i, :] = np.asarray(results_prev[i])
+                p_all[i, 31] = np.deg2rad(p_all[i, 31])
+                p_all[i, 32] = np.deg2rad(p_all[i, 32])
+            print(p_all)#[i])
+            # ppp
+
+            # print()
+
+
+        #TODO: test this!!!
+            # something is wrong when scattering this. For some reason 
+            # p_all to p_working transposes
+
+            # p_all = np.vstack([ results_prev['X_geo'].data,
+            #                     results_prev['Y_geo'].data,
+            #                     results_prev['Z_geo'].data,
+            #                     results_prev['X_geo_DT'].data,
+            #                     results_prev['Y_geo_DT'].data,
+            #                     results_prev['Z_geo_DT'].data,
+            #                     results_prev['mass'].data,
+            #                     results_prev['cd'].data,
+            #                     results_prev['A'].data,
+            #                     results_prev['kappa'].data,
+            #                     results_prev['sigma'].data,
+            #                     results_prev['mag_v'].data,
+            #                     results_prev['tau'].data,
+            #                     results_prev['Q_x'].data,
+            #                     results_prev['Q_y'].data,
+            #                     results_prev['Q_z'].data,
+            #                     results_prev['Q_v_x'].data,
+            #                     results_prev['Q_v_y'].data,
+            #                     results_prev['Q_v_z'].data,
+            #                     results_prev['Q_m'].data,
+            #                     results_prev['Q_cd'].data,
+            #                     results_prev['Q_cl'].data,
+            #                     results_prev['Q_k'].data,
+            #                     results_prev['Q_s'].data,
+            #                     results_prev['Q_bright'].data,
+            #                     results_prev['Q_tau'].data,
+            #                     results_prev['rho'].data,
+            #                     results_prev['parent_index'].data,
+            #                     results_prev['orig_index'].data,
+            #                     results_prev['weight'].data,
+            #                     results_prev['D_DT'].data,
+            #                     np.deg2rad(results_prev['latitude']).data,
+            #                     np.deg2rad(results_prev['longitude']).data,
+            #                     results_prev['height'].data,
+            #                     results_prev['lum_weight'].data,
+            #                     results_prev['pos_weight'].data,
+            #                     results_prev['X_eci'].data,
+            #                     results_prev['Y_eci'].data,
+            #                     results_prev['Z_eci'].data,
+            #                     results_prev['X_eci_DT'].data,
+            #                     results_prev['Y_eci_DT'].data,
+            #                     results_prev['Z_eci_DT'].data])
+            # for i in range()
+            # p_all = copy.deepcopy(np.asarray(p_all).T)
+
+            # print('data read from ', name_end)
+            # print('iterations will be starting from ', t0, 'at time', data_t[0, t0])
+            # print('to check:', data_t[:, t0])
+
+            # print(p_all[:, 6])
+            # print(p_all[0])
+            # if number of particles no longer matches the number of cores to run, add blank lines
+            if n != len(p_all[0])/comm.size:
+                p_all = np.vstack([p_all, np.zeros([abs(n * comm.size - len(p_all)), len(p_all[0])])])
+
+            ## initialise output table
+            results_end = fits.PrimaryHDU()
+            results_end.writeto(name_end, clobber=True)
+            
+        else:
+            initialise = np.hstack((p_all, 
+                                    np.ones((N,1))* float(data_t[0,0]), 
+                                    np.array([data_t[1,0] for i in range(N)]).reshape(-1, 1)))
+
+            ## initialise output table
+            results = fits.PrimaryHDU()
+            name= os.path.join(working_dir ,"outputs", out_name, out_name + version + '_' + eci_name + '_mass'+ str(mass_opt) + "_outputs.fits")
+            
+            results.writeto(name, clobber=True)
+
+            ## create first HDU table and save 
+
+
+
+
+            results = fits.BinTableHDU.from_columns([fits.Column(name='time', format='D', array=initialise[:, 42]),
+                                           fits.Column(name='datetime', format='25A', array=initialise[:, 43]),
+                                           fits.Column(name='X_geo', format='D', array=initialise[:, 0]),
+                                           fits.Column(name='Y_geo', format='D', array=initialise[:, 1]),
+                                           fits.Column(name='Z_geo', format='D', array=initialise[:, 2]),
+                                           fits.Column(name='X_geo_DT', format='D', array=initialise[:, 3]),
+                                           fits.Column(name='Y_geo_DT', format='D', array=initialise[:, 4]),
+                                           fits.Column(name='Z_geo_DT', format='D', array=initialise[:, 5]),
+                                           fits.Column(name='X_eci', format='D', array=initialise[:, 36]),
+                                           fits.Column(name='Y_eci', format='D', array=initialise[:, 37]),
+                                           fits.Column(name='Z_eci', format='D', array=initialise[:, 38]),
+                                           fits.Column(name='X_eci_DT', format='D', array=initialise[:, 39]),
+                                           fits.Column(name='Y_eci_DT', format='D', array=initialise[:, 40]),
+                                           fits.Column(name='Z_eci_DT', format='D', array=initialise[:, 41]),
+                                           fits.Column(name='mass', format='D', array=initialise[:, 6]),
+                                           fits.Column(name='cd', format='D', array=initialise[:, 7]),
+                                           fits.Column(name='A', format='D', array=initialise[:, 8]),
+                                           fits.Column(name='kappa', format='D', array=initialise[:, 9]),
+                                           fits.Column(name='sigma', format='D', array=initialise[:, 10]),
+                                           fits.Column(name='mag_v', format='D', array=initialise[:, 11]),
+                                           fits.Column(name='tau', format='D', array=initialise[:, 12]),
+                                           fits.Column(name='Q_x', format='D', array=initialise[:, 13]),
+                                           fits.Column(name='Q_y', format='D', array=initialise[:, 14]),
+                                           fits.Column(name='Q_z', format='D', array=initialise[:, 15]),
+                                           fits.Column(name='Q_v_x', format='D', array=initialise[:, 16]),
+                                           fits.Column(name='Q_v_y', format='D', array=initialise[:, 17]),
+                                           fits.Column(name='Q_v_z', format='D', array=initialise[:, 18]),
+                                           fits.Column(name='Q_m', format='D', array=initialise[:, 19]),
+                                           fits.Column(name='Q_cd', format='D', array=initialise[:, 20]),
+                                           fits.Column(name='Q_cl', format='D', array=initialise[:, 21]),
+                                           fits.Column(name='Q_k', format='D', array=initialise[:, 22]),
+                                           fits.Column(name='Q_s', format='D', array=initialise[:, 23]),
+                                           fits.Column(name='Q_bright', format='D', array=initialise[:, 24]),
+                                           fits.Column(name='Q_tau', format='D', array=initialise[:, 25]),
+                                           fits.Column(name='rho', format='D', array=initialise[:, 26]),
+                                           fits.Column(name='parent_index', format='D', array=initialise[:, 27]),
+                                           fits.Column(name='orig_index', format='D', array=initialise[:, 28]),
+                                           fits.Column(name='weight', format='D', array=initialise[:, 29]),
+                                           fits.Column(name='D_DT', format='D', array=initialise[:, 30]),
+                                           fits.Column(name='latitude', format='D', array=[np.rad2deg(float(x)) for x in initialise[:, 31]]),
+                                           fits.Column(name='longitude', format='D', array=[np.rad2deg(float(x)) for x in initialise[:, 32]]),
+                                           fits.Column(name='height', format='D', array=initialise[:, 33]),
+                                           fits.Column(name='lum_weight', format='D', array=initialise[:, 34]),
+                                           fits.Column(name='pos_weight', format='D', array=initialise[:, 35])])
+
+            results_list = fits.open(name, mode= 'append')
+            results_list.append(results)
+            results_list[-1].name='time_0'
+            results_list.writeto(name, clobber=True)
+            print('data saved to ', name)
+
+            # as no previous file was given, the first prediction step will be index = 1 in the time steps. 
+            t0 = 1
+
+        for i in range(1, size):
+            comm.send(t0, dest = i)
+
+    else:
+        t0 = comm.recv(source=0)
+        
+    comm.Barrier()
+
+    #################  ALL  ####################################
+    ## performing iterative filter
+    for t in range(t0, T):
+
+        ## everyone gets time 
+        tk = float(data_t[0, t]) 
+        tkm1 = float(data_t[0, t-1])
+        t_end = False
+
+        ## does time = time of user defined fragmetation event
+        if t == t_frag[f]:
+            frag = True
+            f +=1
+        ## if low weighting, use fragmentation covariance to scatter particles more. 
+        elif l_weight:
+            frag = True
+
+        else:
+            frag = False
+        ## if this is the final timestep, prediction step allows mass to go to 0.
+        if t == T-1:
+            t_end = True
+
+    ############  Master gets observation data  ################
+        if rank ==0:
+            print('iteration is: ', t, 'of', T-1, 'at time:', tk)
+
+            # find the indices of the data in the data table that correspond to the current time
+            obs_index_st = int(data_t[2, t])
+            obs_index_ed = int(data_t[2, int(t+1)]) if len(data_t[0])> t+1 else int(len(data))
+            
+            # determine if there are luminosity values available
+            lum_info = []
+            for i in range(obs_index_st, obs_index_ed):
+                #print(data['magnitude'][i])
+                if data['magnitude'][i] <50: # if 'luminosity' in data.colnames:
+                    lum_info.append([data['magnitude'][i]])
+                    lum_info.append([data['mag_error'][i]])
+
+            if dim == 1:  # 1D filter
+                obs_info = np.zeros((obs_index_ed - obs_index_st, 2))
+                for i in range(0, obs_index_ed-obs_index_st):
+                    obs_info[i,:]  = [data['dist_from_start'][i+obs_index_st], data['pos_err'][i+obs_index_st]]
+                fireball_info= [data['Lat_rad'][obs_index_st], data['Lon_rad'][obs_index_st], data['height'][obs_index_st],  date_info[0], date_info[1], date_info[2]+tk, data['g_sin_gamma'][obs_index_st]] 
+                
+            elif dim == 2 or dim == 4:  # 3D cardesian
+                obs_info = np.zeros((obs_index_ed - obs_index_st, 6))
+                if eci_bool:
+                    for i in range(0, obs_index_ed-obs_index_st):
+                        obs_info[i,:] = [data['X_eci'][i+obs_index_st], data['Y_eci'][i+obs_index_st], data['Z_eci'][i+obs_index_st], data['R_X_eci'][i+obs_index_st], data['R_Y_eci'][i+obs_index_st], data['R_Z_eci'][i+obs_index_st]]
+                else:
+                  for i in range(0, obs_index_ed-obs_index_st):
+                        obs_info[i,:] = [data['X_geo'][i+obs_index_st], data['Y_geo'][i+obs_index_st], data['Z_geo'][i+obs_index_st], data['R_X_geo'][i+obs_index_st], data['R_Y_geo'][i+obs_index_st], data['R_Z_geo'][i+obs_index_st]]
+                  
+                fireball_info= [0, 0, 0, date_info[0], date_info[1], date_info[2]+tk, date_info[3], tk] 
+
+            elif dim == 3 or dim == 5:   # 3D rays
+                obs_info = np.zeros((obs_index_ed - obs_index_st, 7))
+                for i in range(0, obs_index_ed-obs_index_st):
+                    ##use table errors
+                    obs_info[i,:] = [data['azimuth'][i+obs_index_st], data['altitude'][i+obs_index_st], data['obs_lat'][i+obs_index_st], data['obs_lon'][i+obs_index_st], data['obs_hei'][i+obs_index_st], data['R_azi'][i+obs_index_st], data['R_alt'][i+obs_index_st]]
+                    # print(obs_info)
+                    ## use double table errors
+                    # obs_info[i,:] = [data['azimuth'][i+obs_index_st], data['altitude'][i+obs_index_st], data['obs_lat'][i+obs_index_st], data['obs_lon'][i+obs_index_st], data['obs_hei'][i+obs_index_st], data['R_azi'][i+obs_index_st]*2, data['R_alt'][i+obs_index_st]*2]
+                    ## use 0.1 degrees
+                    # obs_info[i,:] = [data['azimuth'][i+obs_index_st], data['altitude'][i+obs_index_st], data['obs_lat'][i+obs_index_st], data['obs_lon'][i+obs_index_st], data['obs_hei'][i+obs_index_st], data['R_UV'][i+obs_index_st], data['R_UV'][i+obs_index_st]]
+                
+                fireball_info= [0, 0, 0, date_info[0], date_info[1], date_info[2]+tk, date_info[3], tk] 
+
+
+            for i in range(1, size):
+                comm.send([obs_info, lum_info, frag, fireball_info], dest = i)
+
+        else:
+            [obs_info, lum_info, frag, fireball_info] = comm.recv(source=0)
+
+    ############# Step 2 - Predict and update ##################
+        ## master sends particles to ranks to perform 'forward step' which includes
+        ## non-linear integration of state, model covariance and then calculates particle 
+        ## likelihood. These are sent back to master.
+        comm.Barrier()
+
+        comm.Scatterv(p_all, p_working, root=0)
+
+        ## each rank loops though their array of objects performing 'forward step' which includes
+        # non-linear integration of state, model covariance and then calculates particle likelihood
+        if frag: 
+            for i in range(n):
+                p_working[i, :] = df.Prdct_Upd(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, i, N, frag, t_end, Q_c_frag, m0_max, reverse, eci_bool)
+        else:
+            for i in range(n):
+
+                p_working[i, :] = df.Prdct_Upd(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, i, N, frag, t_end, Q_c, m0_max, reverse, eci_bool)
+
+        comm.Gatherv( p_working, p_all, root=0)
+
+    ##########  Master calculates weights and resamples ########
+        if rank ==0:
+            print('master collected all ')
+            ## if you want to turn resampling on/off... do it here
+            if t_end:
+                resamp = False
+            else:
+                resamp = True
+            
+
+            # an array for the weights is created with 5 rows: [pos_weight, 
+                                                            #  lum_weight
+                                                            #  normalised pos_weight,
+                                                            #  normalised lum_weight,
+                                                            #  combined normalised weight,
+                                                            #  exp of combined normalised weight,
+                                                            #  cumulative weight,
+                                                            #  col in p_all array]
+
+            # if t!=T-1:   
+                # perform resampling
+
+
+
+    ##            #####################
+            ## FOR NON LOG RESAMPLING
+
+            # w = np.empty([8, N])
+
+            # ## my attempt at getting rid of nan weightings... not so efficient so line 689 still needs to use nansum. 
+            # for i in range(N):
+            #     if np.isnan(p_all[i, 29]):
+            #         p_all[i, 29] = 0.
+            #         p_all[i, :] = p_all[i, :] * 0.
+            #     elif np.isnan(p_all[i, 34]):
+            #         p_all[i, 34] = 0.
+            #         p_all[i, :] = p_all[i, :] * 0.
+            #     w[:, i] = np.array([p_all[i, 29], p_all[i, 34],0., 0., 0., 0., 0., i]).T
+
+            # ## calculate sum of weights
+            # weights_sum_p = np.nansum(w[0, :])
+            # weights_sum_l = np.nansum(w[1, :])
+
+            # ## TODO.. currently permanently set this to false. 
+            # l_weight = False
+
+            # w[2, :] = w[0, :] / weights_sum_p  # fill in normalised sum 
+            # w[3, :] = w[1, :] / weights_sum_l  # fill in normalised sum 
+
+            # ## position vs luminosity relative weighting adjusted. 
+            # ## TODO: check when lum_weighting_coeff = 0, w[3,:] is not used.
+            # w[4, :] = w[2, :]#(w[2, :] + w[3, :])/2# * lum_weighting_coef
+
+            # p_all[:, 35] = w[2, :]      # position weighting
+            # p_all[:, 34] = w[3, :]      # luminous weighting
+            # p_all[:, 29] = w[4, :]      # total weightings to work on
+
+            
+            # if resamp:
+                # w[5, :] = w[4,:]
+
+                # weights_sum = np.sum(w[5, :])
+                # w[5, :] = w[5, :] / weights_sum
+                # w[6, :] = np.cumsum(w[5, :])        #np.cumsum([np.exp(i) for i in w[5, :]])   # fill in cumulative sum
+
+                # ## calculate particle effectiveness for degeneracy
+                # n_eff = 1/np.sum([i**2 for i in w[5, :]])
+                # n_eff_all[t] = n_eff
+                # print('sum of weights: ',weights_sum)
+                # print('effectiveness: ', n_eff/ N * 100, '%')
+
+                # ## resampling
+                # #draw = np.random.uniform(0, 1 , N) # random from normal distributions
+                # draw = np.cumsum([np.ones(N) * 1/N ])- 1./(2*N)
+                # index = np.searchsorted(w[6, :], draw, side='left')
+                # p2 = np.asarray([p_all[int(w[7, index[j]]), :]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
+
+                # #p2[:, 29] = [np.exp(i) for i in p2[:, 29]]
+                # weights_sum = np.sum(p2[:, 29])
+
+                # p2[:, 29] =  p2[:, 29] / weights_sum
+
+            # else:
+            #     print('no resampling performed')
+            #     weights_sum = np.sum(p_all[:, 29])
+
+            #     p_all[:, 29] =  p_all[:, 29] / weights_sum
+
+
+
+            #####################
+##            # for log weights calculated in pred_update:
+            w = np.empty([8, N])
+            for i in range(N):
+                # print(p_all[i, 29])
+                if np.isnan(p_all[i, 29]):
+                    p_all[i, :] = p_all[i, :] * 0.
+                    p_all[i, 29] = -5000.
+                elif np.isnan(p_all[i, 34]):
+                    p_all[i, :] = p_all[i, :] * 0.
+                    p_all[i, 26] =  -5000.
+                w[:, i] = np.array([p_all[i, 29], p_all[i, 34],0., 0., 0., 0., 0., i]).T
+        
+            
+       
+            mx_p = max(w[0,:])
+            mx_l = max(w[1,:])
+            weights_sum_p = np.log(np.sum([ np.exp(i - mx_p) for i in w[0, :]])) + mx_p     
+            weights_sum_l = np.log(np.sum([ np.exp(i - mx_l) for i in w[1, :]])) + mx_l       
+            #weights_sqr_sum = sum(w[0, :]**2)
+            # print(mx_p, mx_l, weights_sum_p, weights_sum_l)
+
+
+            # l_weight = False
+
+
+            w[2, :] = w[0, :] - weights_sum_p  # fill in normalised sum in log space
+            w[3, :] = w[1, :] - weights_sum_l  # fill in normalised sum in log space
+
+            ##TODO: this is where luminosity relative weighting should be adjusted!
+            #w[4, :] = w[2, :] + (w[3, :] * 0.)   
+            #w[4, :] = w[2, :] + (w[3, :] * 1.)    
+            #w[4, :] = w[2, :] + (w[3, :] * 1/5.)   
+            # w[4, :] = w[2, :] + (w[3, :] * 1/10.)    
+            #w[4, :] = w[2, :] + (w[3, :] * 1/50. ) 
+            #w[4, :] = w[2, :] + (w[3, :] * 1/100.)    
+            # w[4, :] = w[2, :] + (w[3, :] * 1/1000. )   
+            w[4, :] = [np.log(np.exp(w[2, i]) * np.exp(w[3, i]) * lum_weighting_coef) for i in range(N)]
+            # print(w[4, 0], np.exp(w[2, 0]), np.exp(w[3, 0]) , lum_weighting_coef)
+            # print(w[2, 0] , w[3, 0])
+            # print(w)
+            # w[4, :] = w[2, :]
+
+            mx = max(w[4,:])
+            weights_sum = np.log(np.sum([ np.exp(i - mx) for i in w[4, :]])) + mx   
+            # print(mx, weights_sum)
+            
+
+            w[4, :] = w[4, :] - weights_sum
+
+            p_all[:, 35] = w[2, :]
+            p_all[:, 34] = w[3, :]
+            p_all[:, 29] = w[4, :]            
+
+            w[5, :] = [exp(i) for i in w[4,:]]  # take exp of normalised sum
+
+            w[6, :] = np.cumsum(w[5, :])   # fill in cumulative sum
+
+            ## calculate particle effectiveness for degeneracy
+            n_eff = 1/np.sum(w[5, :]**2)
+            #n_eff_all[t] = n_eff
+            print('sum of weights: ', weights_sum)
+            print('effectiveness: ', n_eff/ N * 100, '%')
+
+            ## resampling
+            draw = np.random.uniform(0, 1 , N)
+            index = np.searchsorted(w[6, :], draw, side='left')
+            # print(w[7], index,N)
+            p2 = np.asarray([p_all[int(w[7, index[j]])]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
+
+            #p2[:, 29] = np.asarray([w[4, w[7, index[j]]]  for j in range(N)]) 3 should do the same as line "p_all[:, 29] = w[4, :]"
+            mx = max(p2[:, 29])
+            weights_sum = np.log(np.sum([ np.exp(i - mx) for i in p2[:, 29]])) + mx
+
+            p2[:, 29] =  [exp(i-weights_sum) for i in p2[:, 29]]
+#
+
+            p_all = np.asarray(copy.deepcopy(p2))
+
+
+
+            avg_vel = 0.
+            avg_mass = 0.
+            avg_kappa = 0.
+            avg_sigma = 0.
+            avg_mag = 0.
+
+            for i in range(N):
+                ## if printing averages to terminal,, uncomment next 6 lines:
+                avg_vel += np.linalg.norm([p_all[i, 3], p_all[i, 4], p_all[i, 5]]) *  p2[i, 29]
+                avg_mass += p_all[i, 6] *  p2[i, 29]
+                avg_kappa += p_all[i, 9] *  p2[i, 29]
+                avg_sigma += p_all[i, 10] *  p2[i, 29]
+                avg_mag += p_all[i, 11] *  p2[i, 29]
+            
+            print('mean velocity: ', avg_vel )       
+            print('mean mass: ', avg_mass)
+            print('mean kappa: ', avg_kappa)
+            print('mean sigma: ', avg_sigma * 1e6)
+            print('mean M_v: ', avg_mag)
+            print('observed M_vs: ', lum_info)
+            
+            # save resulting table in HDU fits file
+            p_out = np.hstack((p_all, 
+                               np.ones((N,1))*tk, 
+                               np.array([data_t[1,t] for i in range(N)]).reshape(-1, 1)))
+
+
+            results = fits.BinTableHDU.from_columns([fits.Column(name='time', format='D', array=p_out[:, 42]),
+                                           fits.Column(name='datetime', format='25A', array=p_out[:, 43]),
+                                           fits.Column(name='X_geo', format='D', array=p_out[:, 0]),
+                                           fits.Column(name='Y_geo', format='D', array=p_out[:, 1]),
+                                           fits.Column(name='Z_geo', format='D', array=p_out[:, 2]),
+                                           fits.Column(name='X_geo_DT', format='D', array=p_out[:, 3]),
+                                           fits.Column(name='Y_geo_DT', format='D', array=p_out[:, 4]),
+                                           fits.Column(name='Z_geo_DT', format='D', array=p_out[:, 5]),
+                                           fits.Column(name='X_eci', format='D', array=p_out[:, 36]),
+                                           fits.Column(name='Y_eci', format='D', array=p_out[:, 37]),
+                                           fits.Column(name='Z_eci', format='D', array=p_out[:, 38]),
+                                           fits.Column(name='X_eci_DT', format='D', array=p_out[:, 39]),
+                                           fits.Column(name='Y_eci_DT', format='D', array=p_out[:, 40]),
+                                           fits.Column(name='Z_eci_DT', format='D', array=p_out[:, 41]),
+                                           fits.Column(name='mass', format='D', array=p_out[:, 6]),
+                                           fits.Column(name='cd', format='D', array=p_out[:, 7]),
+                                           fits.Column(name='A', format='D', array=p_out[:, 8]),
+                                           fits.Column(name='kappa', format='D', array=p_out[:, 9]),
+                                           fits.Column(name='sigma', format='D', array=p_out[:, 10]),
+                                           fits.Column(name='mag_v', format='D', array=p_out[:, 11]),
+                                           fits.Column(name='tau', format='D', array=p_out[:, 12]),
+                                           fits.Column(name='Q_x', format='D', array=p_out[:, 13]),
+                                           fits.Column(name='Q_y', format='D', array=p_out[:, 14]),
+                                           fits.Column(name='Q_z', format='D', array=p_out[:, 15]),
+                                           fits.Column(name='Q_v_x', format='D', array=p_out[:, 16]),
+                                           fits.Column(name='Q_v_y', format='D', array=p_out[:, 17]),
+                                           fits.Column(name='Q_v_z', format='D', array=p_out[:, 18]),
+                                           fits.Column(name='Q_m', format='D', array=p_out[:, 19]),
+                                           fits.Column(name='Q_cd', format='D', array=p_out[:, 20]),
+                                           fits.Column(name='Q_cl', format='D', array=p_out[:, 21]),
+                                           fits.Column(name='Q_k', format='D', array=p_out[:, 22]),
+                                           fits.Column(name='Q_s', format='D', array=p_out[:, 23]),
+                                           fits.Column(name='Q_bright', format='D', array=p_out[:, 24]),
+                                           fits.Column(name='Q_tau', format='D', array=p_out[:, 25]),
+                                           fits.Column(name='rho', format='D', array=p_out[:, 26]),
+                                           fits.Column(name='parent_index', format='D', array=p_out[:, 27]),
+                                           fits.Column(name='orig_index', format='D', array=p_out[:, 28]),
+                                           fits.Column(name='weight', format='D', array=p_out[:, 29]),
+                                           fits.Column(name='D_DT', format='D', array=p_out[:, 30]),
+                                           fits.Column(name='latitude', format='D', array=[np.rad2deg(float(x)) for x in p_out[:, 31]]),
+                                           fits.Column(name='longitude', format='D', array=[np.rad2deg(float(x)) for x in p_out[:, 32]]),
+                                           fits.Column(name='height', format='D', array=p_out[:, 33]),
+                                           fits.Column(name='lum_weight', format='D', array=p_out[:, 34]),
+                                           fits.Column(name='pos_weight', format='D', array=p_out[:, 35])])
+
+            results_list.append(results)
+            results_list[-1].name='time_'+str(t)
+            results_list.writeto(name, clobber=True)
+            print('data saved to ', name)
+
+            # save this table in its own righ as an 'end' file in case code is interrupted.
+            # this means only this will need to be read in rather than trying to extract 
+            # end table only from large HDU file
+            name_end = name.replace(".fits", "_end.fits")
+            results.writeto(name_end, clobber=True)
+
+            # end this iteration
+            print("now I've done collective things, start again. end timestep #", t, "at time ", tk, "secs")
+        
+        comm.Barrier()  ## all ranks are held while master performs resampling.
+
+    print("we're all happy workers :-). Now saving all data to one table")
+    comm.Barrier()
+
+    ##########  Master saves table with all particles ########
+    ## master extracts all HDU tables and appends them to one large output table 
+    ## for plotting together.
+    if rank==0:
+        tabs = fits.open(name)
+
+        nrows = int(N *T)
+        all_results = fits.BinTableHDU.from_columns(tabs[1].columns, nrows=nrows)
+
+        for colname in tabs[1].columns.names:
+            for i in range(2,T+1):
+                j = i-1
+                all_results.data[colname][N*j:N*j+N] = tabs[i].data[colname]
+        
+        name= os.path.join(working_dir ,"outputs", out_name, out_name + version + '_' + eci_name + '_mass'+ str(mass_opt) + '_outputs_all.fits')
+
+        all_results.writeto(name, clobber=True)
+
+        print('data saved to ', name)
+
+
+        ## saves a table of means for each timestep
+        mean_results = fits.BinTableHDU.from_columns(tabs[1].columns, nrows=T)
+
+        for colname in tabs[1].columns.names:
+            for i in range(2, T+1):
+                if colname != 'time' and colname != 'datetime':
+                    col_data = sum(tabs[i].data[colname] * tabs[i].data['weight'])
+                    mean_results.data[colname][i-1] = col_data
+
+                else:
+                    col_data = tabs[i].data[colname]
+                    mean_results.data[colname][i-1] = col_data[0]
+
+        
+        name= os.path.join(working_dir ,"outputs", out_name, out_name + version + '_' + eci_name + '_mass'+ str(mass_opt) + '_outputs_mean.fits')
+
+        mean_results.writeto(name, clobber=True)
+
+        print('mean data saved to ', name)
+
+
+#------------------------------------------------------------------------------
+# hack to fix lsoda problem
+#------------------------------------------------------------------------------
+#
+def fileno(file_or_fd):
+    fd = getattr(file_or_fd, 'fileno', lambda: file_or_fd)()
+    if not isinstance(fd, int):
+        raise ValueError("Expected a file (`.fileno()`) or a file descriptor")
+    return fd
+
+@contextlib.contextmanager
+def stdout_redirected(to=os.devnull, stdout=None):
+    """
+    https://stackoverflow.com/a/22434262/190597 (J.F. Sebastian)
+    """
+    if stdout is None:
+       stdout = sys.stdout
+
+    stdout_fd = fileno(stdout)
+    # copy stdout_fd before it is overwritten
+    #NOTE: `copied` is inheritable on Windows when duplicating a standard stream
+    with os.fdopen(os.dup(stdout_fd), 'wb') as copied: 
+        stdout.flush()  # flush library buffers that dup2 knows nothing about
+        try:
+            os.dup2(fileno(to), stdout_fd)  # $ exec >&to
+        except ValueError:  # filename
+            with open(to, 'wb') as to_file:
+                os.dup2(to_file.fileno(), stdout_fd)  # $ exec > to
+        try:
+            yield stdout # allow code to be run with the redirected stdout
+        finally:
+            # restore stdout to its previous value
+            #NOTE: dup2 makes stdout_fd inheritable unconditionally
+            stdout.flush()
+            os.dup2(copied.fileno(), stdout_fd)  # $ exec >&copied
+
+
+
+##########  End of particle filter code ########
+
+
+
+
+##### removed from weighting calculations
+            #if weights_sum <-50:
+#                print('sum of weights: ', weights_sum )
+#                print('error: sum of weights is zero')
+#                l_weight = True
+#                continue
+
+                #MPI.COMM_WORLD.Abort(1)
+                #sys.exit()
+            
+           # elif weights_sum <0:
+           #     l_weight = True
+           #     print("increasing errors")
+
+           #     ## calculate particle effectiveness for degeneracy
+           #     #n_eff = 1/weights_sqr_sum
+           #     #n_eff_all[t] = n_eff
+           #     print('sum of weights: ', weights_sum)
+           #     #print('effectiveness: ', n_eff)
+           #     w[1, :] = w[0, :] - weights_sum  # fill in normalised sum in log space
+           #     w[2, :] = [exp(i) for i in w[1,:]]  # take exp of normalised sum
+           #     w[3, :] = np.cumsum(w[2, :])   # fill in cumulative sum
+
+
+                #####################
+    ##            # for log resampling:
+                # w[5, :] = [np.log(i) for i in w[4,:]]  # take exp of normalised sum 
+
+                # mx = max(w[5,:])
+                # weights_sum = np.log(np.sum([ np.exp(i - mx) for i in w[5, :]])) + mx   
+                # w[5, :] = w[5, :] - weights_sum 
+                # w[6, :] = np.cumsum([np.exp(i) for i in w[5, :]])   # fill in cumulative sum
+                # n_eff = 1/np.sum([np.exp(i)**2 for i in w[5, :]])
+                # # calculate particle effectiveness for degeneracy
+                # n_eff_all[t] = n_eff
+                # print('sum of weights: ',weights_sum)
+                # print('effectiveness: ', n_eff/ N * 100, '%')
+
+                # # resampling
+                # draw = np.random.uniform(0, 1 , N) # random from normal distributions
+                # draw = np.cumsum([np.ones(N) * 1/N ])- 1./(2*N)
+                # index = np.searchsorted(w[6, :], draw, side='left')
+                # p2 = np.asarray([p_all[w[7, index[j]], :]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
+
+                # p2[:, 29] = [np.exp(i) for i in p2[:, 29]]
+                # weights_sum = np.nansum(p2[:, 29])
+                # p2[:, 29] =  p2[:, 29] / weights_sum
