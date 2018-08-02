@@ -87,74 +87,68 @@ Output: HDU table fits file.
 
         Each table is in the format:
         #-------------------------------------------------------
-        # column index KEY:
-        # 0:  X_geo
-        # 1:  Y_geo
-        # 2:  Z_geo
-        # 3:  X_geo_DT:   x vel
-        # 4:  Y_geo_DT:   y vel
-        # 5:  Z_geo_DT:   z vel
-        # 6:  mass
-        # 7:  cd:         drag coefficient
-        # 8:  A:          shape coefficient
-        # 9:  kappa:      shape-density coefficient, 
-                          = cd * A / density^(2/3)
-        # 10: sigma:      ablation coefficient
-        # 11: M_v:        Visual magnitude
-        # 12: tau:        luminous efficiency parameter
-        # 13: Q_x:        covariance for X_geo
-        # 14: Q_y:        covariance for Y_geo
-        # 15: Q_z:        covariance for Z_geo
-        # 16: Q_vel_x:    covariance for X_geo_DT
-        # 17: Q_vel_y:    covariance for Y_geo_DT
-        # 18: Q_vel_z:    covariance for Z_geo_DT
-        # 19: Q_m:        covariance for mass
-        # 20: empty
-        # 21: empty
-        # 22: Q_k:        covariance for kappa
-        # 23: Q_s:        covariance for sigma
-        # 24: Q_bright:   covariance for M_v
-        # 25: Q_tau:      covariance for tau
-        # 26: rho:        density. 
-              Previously has been attributed to luminous 
-              weighting and flight angle gamma
-        # 27: parent_index: particle index of parent particle 
-                            from t_k-1
-        # 28: orig_index:   index of particle at t_0 where 
-                            this particle was originally derived
-        # 29: weight
-        # 30: D_DT:         magnitude of velocity vector: 
-                            norm(vel_x, vel_y, vel_z)
-        # 31: latitude:     latitude of particle
-        # 32: longitude:    longitude of particle
-        # 33: height:       height of particle
-        # 34: lum_weight:   luminous weighting
-        # 35: pos_weight:   position weighting
+        column index KEY:
+         0 : 'X_geo'       - X posistion in ECEF (m)
+         1 : 'Y_geo'       - Y posistion in ECEF (m)
+         2 : 'Z_geo'       - Z posistion in ECEF (m) 
+         3 : 'X_geo_DT'    - X velocity (dx/dt) in ECEF (m/s) 
+         4 : 'Y_geo_DT'    - Y velocity (dy/dt) in ECEF (m/s) 
+         5 : 'Z_geo_DT'    - Z velocity (dz/dt) in ECEF (m/s) 
+         36: 'X_eci'       - X posistion in ECI (m)
+         37: 'Y_eci'       - Y posistion in ECI (m)
+         38: 'Z_eci'       - Z posistion in ECI (m)
+         39: 'X_eci_DT'    - X velocity (dx/dt) in ECI (m/s)
+         40: 'Y_eci_DT'    - Y velocity (dy/dt) in ECI (m/s)
+         41: 'Z_eci_DT'    - Z velocity (dz/dt) in ECI (m/s)
+         6 : 'mass'        - mass (kg)
+         7 : 'cd'          - drag coefficient (aerodynamic => 2 * gamma; see Bronshten 1976)
+         8 : 'A'           - shape coefficient,
+                               A = cross sectional surface area / volume^(2/3)
+         9 : 'kappa'       - shape-density coefficient, 
+                               kappa = cd * A / density^(2/3)
+         10: 'sigma'       - ablation coefficient
+         11: 'mag_v'       - absolute visual magnitude
+         12: 'tau'         - luminous efficiency parameter
+         13: 'Q_x'         - variance of process noise for X position
+         14: 'Q_y'         - variance of process noise for Y position
+         15: 'Q_z'         - variance of process noise for Z position
+         16: 'Q_v_x'       - variance of process noise for X velocity
+         17: 'Q_v_y'       - variance of process noise for Y velocity
+         18: 'Q_v_z'       - variance of process noise for Z velocity
+         19: 'Q_m'         - variance of process noise for mass
+         20: 'Q_cd'        - variance of process noise for drag coefficient (unused)
+         21: 'Q_cl'        - variance of process noise for lift coefficient (unsued)
+         22: 'Q_k'         - variance of process noise for kappa
+         23: 'Q_s'         - variance of process noise for sigma
+         24: 'Q_tau'       - variance of process noise for luminous efficiency
+         25: 'brightness'  - luminous intensiy
+         26: 'rho'         - initial density (kg/m3)
+         27: 'parent_index'- index of parent particle (t-1)
+         28: 'orig_index'  - index of original particle assigned in dim.Initialise() (t0)
+         29: 'weight'      - combined position and luminous weighting (assigned in main)
+         30: 'D_DT'        - magnitude of velocity vector: norm(vel_x, vel_y, vel_z)
+         31: 'latitude'    - latitude (degrees)
+         32: 'longitude'   - longitude (degrees)
+         33: 'height'      - height (m)
+         34: 'lum_weight'  - luminous weighting
+         35: 'pos_weight'  - position weighting
 
         additional columns include time (relative to event t0)
         and datetime
-
+        
 
     Still TODO:
-    - incoming errors for 3D cartesian is fixed at 50m. 
-    - incoming errors for rays are currently taken from table 
-      but I believe they are too small. There is a section on line
-    - in initialise function (in imported dim file), correlation 
-      between shape and drag is a magic equation I invented
-    - Intensity calculation - there are 3 ways of doing it?
-    - 1D pf errors are being set within the weightinf function 
+    - Intensity calculation - there are 3 ways of doing it...
+    - 1D pf errors are being set within the weighting function 
       rather than being passed from inputs
-
-
-
 
 """
 
-# import modules
+# import modules used by all dims
 
 # general
 from math import *
-import copy, operator, random, time
+import copy, random
 import sys, os, argparse, glob
 import contextlib
 
@@ -167,61 +161,55 @@ import scipy.integrate
 from astropy.table import Table, Column, join, hstack
 import astropy.units as u
 from astropy.io import fits
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 
 # own
 import bf_functions_3d as bf
 from nrlmsise_00_header import *
 from nrlmsise_00 import *
 import dfn_utils 
+import bf_functions_3d as bf
+import trajectory_utilities as tu
 
 #import multiprocessing
 from mpi4py import MPI
 
 
+
 def ParticleFilterParams():
     """ returns particle filter function parameters. 
-        Q_c:      covariance vector
-        Q_c_frag: covariance vector if there is a fragmentation event 
+        Q_c:      process noise variances as a row vector
+        Q_c_frag: process noise variances as a row vector if there is a fragmentation event 
                   (higher for mass and vels)
-        P:        initial uncertainty in parameters (position and velocity only)
+        P:        initial state varances (position and velocity only)
         range_params: other dynamic equation parameter ranges for initiation of 
                       particles
 
     """
+
     ## Particle filter parameters
 
-    ## Q_c is the time continuous covariance matrix. This should be the errors in the 
-    ## model. I still havent worked out these values
-    ## Q_c_frag is the error at reinitialisation if the fragmentation option is used
-    ## in the form [x_cov, y_cov, z_cov, 
-    ##              vel_x_cov, vel_y_co, vel_z_cov, ****all vel covs as a %age of vel component***
-    ##              mass_cov,                       ****mass_cov as a %age of total mass***
-    ##              sigma_cov, shape_cov, brightness_cov, tau_cov]
+    # Q_c will be the time continuous covariance matrix. 
+    #This should be the errors in the model.
+    # in the form [x_cov, y_cov, z_cov, 
+    #              vel_x_cov, vel_y_co, vel_z_cov, 
+    #              mass_cov,                      
+    #              sigma_cov, shape_cov, brightness_cov, tau_cov]
     
-    # Q_c = [0., 0., 0.,
-    #    0.005, 0.005, 0.005,
-    #    0.4, 0., 0.,
-    #    1e-4, 1e-10, 0., 0.0001]
+
     Q_c = [2., 2., 2., 
            50., 50., 50., 
            5., 0, 0,
            1e-3, 1e-10, 0., 0.0001]
 
 
-    # Q_c = [0., 0., 0., 
-    #        0.008, 0.008, 0.008, 
-    #        .4, 0, 0,
-    #        1e-4, 1e-10, 0., 0.0001]
-
-    # Q_c = [0., 0., 0., 
-    #        0.01, 0.01, 0.01, 
-    #        0.4, 0., 0.,
-    #        1e-4, 1e-10, 0., 0.0001]
     print('Qc values used:', Q_c)
 
     Q_c = np.asarray([i**2 for i in Q_c])
 
+    
+    # Q_c_frag is used at reinitialisation if the fragmentation option is used
+    
     Q_c_frag = [0., 0., 0., 
                 0.02, 0.02, 0.02, 
                 0.5,  0, 0,
@@ -229,23 +217,19 @@ def ParticleFilterParams():
 
     Q_c_frag = [i**2 for i in Q_c_frag]
 
-    ## starting error to initialise gaussian spread of particals. P2 is the initial
-    ## starting error at reinitialisation if the fragmentation option is used
+    ## P: starting uncertainty to initialise gaussian spread of particals. 
+    ## P2: starting uncertainty at reinitialisation if the fragmentation option is used
     ## in the form [x_cov, y_cov, z_cov, % of vel_x_cov, % of vel_y_co, % of  vel_z_cov]
     P = [50., 50., 50., 250., 250., 250.]
+    P2 = [50., 50., 50., 250., 250., 250.]
 
-
+    P = [i**2 for i in P]
     ## Initialise state ranges
 
-    ## maximum initial mass
-    #m0_max = 2000.
-    #m0_min = 0.5
 
     ## shape parameter close to a rounded brick (1.8) (A for a sphere =1.21)
     A_min = 1.21
     A_max = 3.0    
-    #A_mean = 1.4
-    #A_std = .33
 
     ## luminosity coefficient
     tau_min = 0.0001
@@ -258,7 +242,7 @@ def ParticleFilterParams():
     ## to choose density values according to a distribution of meteorite percentages:
     particle_choices = []
 
-    # this is created using lines 228-228; uncomment if needs changing.
+    # this is created using lines 257-266; uncomment if needs changing.
     random_meteor_type = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 4, 4]
 
     #random_meteor_type = []
@@ -273,18 +257,9 @@ def ParticleFilterParams():
     #for i in range(2):
     #   random_meteor_type.append(4)   # 2 % cometary
 
-    ## drag coefficients. Values really not well constrained!
-    #cd_mean = 1.3
-    #cd_std = 0.3
-
     ## ablation coefficeint 
     #sigma_min = 0.001*1e-6
     #sigma_max = 0.5*1e-6
-
-
-    ## shape density coeficient sensible values:
-    #K_min = (0.6*1.21)/ 1000**(2/3.)
-    #K_max = (1.8*4)/ 7000**(2/3.)
 
 
     #range_params = [m0_max, A_mean, A_std, pm_mean, pm_std, random_meteor_type, cd_mean, cd_std, sigma_min, sigma_max, K_min, K_max, tau_min, tau_max]
@@ -301,6 +276,7 @@ if __name__ == '__main__':
     size = comm.size        # total number of processes
     rank = comm.Get_rank()        # rank of this process
     status = MPI.Status()   # get MPI status object
+    print(rank, size, status)
 
 
     if rank ==0:
@@ -311,7 +287,7 @@ if __name__ == '__main__':
         parser.add_argument("-p","--numparts",type=int,
                 help="number of particles to run. Must be an integer.", required=True)
         parser.add_argument("-i","--dimension",type=int,
-                help="would you like to run \n(1) 1D analysis on a single, pre-triangulated trajectory file, \n(2) 3D analysis on multiple pre-triangulated files, \n(3) 3D analysis on calibrated raw observations in ECEF, \n(4) 3D analysis on pointwise data, or \n(5) 3D analysis on calibrated raw observations in ECI?",required=True)
+                help="would you like to run \n(1) 1D analysis on a single, pre-triangulated trajectory file, \n(2) 3D analysis on multiple pre-triangulated files, \n(3) 3D analysis on calibrated raw observations in ECI, \n(4) 3D analysis on pointwise data",required=True)
         parser.add_argument("-c","--comment",type=str,
                 help="add a version name to appear in saved file titles. If unspecified, _testing_ is used.",default='testing')
         parser.add_argument("-f","--fragment",action="store_true",
@@ -354,8 +330,6 @@ if __name__ == '__main__':
         # elif dim == 4:
         #     import geo_3d_eci as df
         elif dim==3:
-            import full_3d_ECEF as df
-        elif dim==5:
             import full_3d_ECI as df
 
         # number of particles
@@ -502,7 +476,7 @@ if __name__ == '__main__':
                         if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
                         else: date_info = np.append(date_info, T0)
 
-                elif dim==3 or dim==5:  # 3D rays
+                elif dim==3 :  # 3D rays
                     if n_obs>1:
                         ## t0 is start of filter, T0 is start of fireball
                         data, t0, T0, eci_bool = bf.Geo_Fireball_Data(filenames, pse, reverse)
@@ -615,11 +589,8 @@ if __name__ == '__main__':
         elif dim == 2 or dim == 4:
             import geo_3d as df
         elif dim == 3:
-            import full_3d_ECEF as df
-        elif dim == 5:
             import full_3d_ECI as df
-        import trajectory_utilities as tu
-
+            
         [Q_c, Q_c_frag, P,  range_params] = ParticleFilterParams()
 
         p_all = None
@@ -640,7 +611,7 @@ if __name__ == '__main__':
     comm.Scatterv(p_all, p_working, root=0)
 
     for i in range(n):
-        p_working[i, :] = df.Initialise(x0, v0, rank+i, rank+i, N, P, range_params, alpha, date_info, mass_opt, m0_max, data['gamma'][0], eci_bool)
+        p_working[i, :] = df.Initialise(x0, v0, rank*n+i, rank*n+i, N, P, range_params, alpha, date_info, mass_opt, m0_max, data['gamma'][0], eci_bool)
 
     comm.Gatherv( p_working, p_all, root=0)
     
@@ -665,16 +636,19 @@ if __name__ == '__main__':
 
             results_prev = Table(results_prev)
             results_prev.remove_columns(['datetime', 'time'])
+            # results_prev['latitude'] = np.deg2rad(results_prev['latitude'])
+            # results_prev['longitude'] = np.deg2rad(results_prev['longitude'])
             # print('len', N, len(results_prev))
             # print(results_prev)
-            for i in range(len(results_prev)):
+            
+            # p_all = np.asarray(results_prev)
+            # for i in range(len(results_prev)):
                 # print(i)
                 # print('this', np.asarray(results_prev[i]))
-                p_all[i, :] = np.asarray(results_prev[i])
-                p_all[i, 31] = np.deg2rad(p_all[i, 31])
-                p_all[i, 32] = np.deg2rad(p_all[i, 32])
-            print(p_all)#[i])
-            # ppp
+                # p_all[i, :] = np.asarray(results_prev[i])
+                # p_all[i, 31] = np.deg2rad(p_all[i, 31])
+                # p_all[i, 32] = np.deg2rad(p_all[i, 32])
+
 
             # print()
 
@@ -683,57 +657,50 @@ if __name__ == '__main__':
             # something is wrong when scattering this. For some reason 
             # p_all to p_working transposes
 
-            # p_all = np.vstack([ results_prev['X_geo'].data,
-            #                     results_prev['Y_geo'].data,
-            #                     results_prev['Z_geo'].data,
-            #                     results_prev['X_geo_DT'].data,
-            #                     results_prev['Y_geo_DT'].data,
-            #                     results_prev['Z_geo_DT'].data,
-            #                     results_prev['mass'].data,
-            #                     results_prev['cd'].data,
-            #                     results_prev['A'].data,
-            #                     results_prev['kappa'].data,
-            #                     results_prev['sigma'].data,
-            #                     results_prev['mag_v'].data,
-            #                     results_prev['tau'].data,
-            #                     results_prev['Q_x'].data,
-            #                     results_prev['Q_y'].data,
-            #                     results_prev['Q_z'].data,
-            #                     results_prev['Q_v_x'].data,
-            #                     results_prev['Q_v_y'].data,
-            #                     results_prev['Q_v_z'].data,
-            #                     results_prev['Q_m'].data,
-            #                     results_prev['Q_cd'].data,
-            #                     results_prev['Q_cl'].data,
-            #                     results_prev['Q_k'].data,
-            #                     results_prev['Q_s'].data,
-            #                     results_prev['Q_bright'].data,
-            #                     results_prev['Q_tau'].data,
-            #                     results_prev['rho'].data,
-            #                     results_prev['parent_index'].data,
-            #                     results_prev['orig_index'].data,
-            #                     results_prev['weight'].data,
-            #                     results_prev['D_DT'].data,
-            #                     np.deg2rad(results_prev['latitude']).data,
-            #                     np.deg2rad(results_prev['longitude']).data,
-            #                     results_prev['height'].data,
-            #                     results_prev['lum_weight'].data,
-            #                     results_prev['pos_weight'].data,
-            #                     results_prev['X_eci'].data,
-            #                     results_prev['Y_eci'].data,
-            #                     results_prev['Z_eci'].data,
-            #                     results_prev['X_eci_DT'].data,
-            #                     results_prev['Y_eci_DT'].data,
-            #                     results_prev['Z_eci_DT'].data])
-            # for i in range()
-            # p_all = copy.deepcopy(np.asarray(p_all).T)
+            p_all = np.vstack([ results_prev['X_geo'].data,
+                                results_prev['Y_geo'].data,
+                                results_prev['Z_geo'].data,
+                                results_prev['X_geo_DT'].data,
+                                results_prev['Y_geo_DT'].data,
+                                results_prev['Z_geo_DT'].data,
+                                results_prev['mass'].data,
+                                results_prev['cd'].data,
+                                results_prev['A'].data,
+                                results_prev['kappa'].data,
+                                results_prev['sigma'].data,
+                                results_prev['mag_v'].data,
+                                results_prev['tau'].data,
+                                results_prev['Q_x'].data,
+                                results_prev['Q_y'].data,
+                                results_prev['Q_z'].data,
+                                results_prev['Q_v_x'].data,
+                                results_prev['Q_v_y'].data,
+                                results_prev['Q_v_z'].data,
+                                results_prev['Q_m'].data,
+                                results_prev['Q_cd'].data,
+                                results_prev['Q_cl'].data,
+                                results_prev['Q_k'].data,
+                                results_prev['Q_s'].data,
+                                results_prev['Q_tau'].data,
+                                results_prev['brightness'].data,
+                                results_prev['rho'].data,
+                                results_prev['parent_index'].data,
+                                results_prev['orig_index'].data,
+                                results_prev['weight'].data,
+                                results_prev['D_DT'].data,
+                                np.deg2rad(results_prev['latitude']).data,
+                                np.deg2rad(results_prev['longitude']).data,
+                                results_prev['height'].data,
+                                results_prev['lum_weight'].data,
+                                results_prev['pos_weight'].data,
+                                results_prev['X_eci'].data,
+                                results_prev['Y_eci'].data,
+                                results_prev['Z_eci'].data,
+                                results_prev['X_eci_DT'].data,
+                                results_prev['Y_eci_DT'].data,
+                                results_prev['Z_eci_DT'].data])
+            p_all = copy.deepcopy(np.asarray(p_all).T)
 
-            # print('data read from ', name_end)
-            # print('iterations will be starting from ', t0, 'at time', data_t[0, t0])
-            # print('to check:', data_t[:, t0])
-
-            # print(p_all[:, 6])
-            # print(p_all[0])
             # if number of particles no longer matches the number of cores to run, add blank lines
             if n != len(p_all[0])/comm.size:
                 p_all = np.vstack([p_all, np.zeros([abs(n * comm.size - len(p_all)), len(p_all[0])])])
@@ -790,8 +757,8 @@ if __name__ == '__main__':
                                            fits.Column(name='Q_cl', format='D', array=initialise[:, 21]),
                                            fits.Column(name='Q_k', format='D', array=initialise[:, 22]),
                                            fits.Column(name='Q_s', format='D', array=initialise[:, 23]),
-                                           fits.Column(name='Q_bright', format='D', array=initialise[:, 24]),
-                                           fits.Column(name='Q_tau', format='D', array=initialise[:, 25]),
+                                           fits.Column(name='Q_tau', format='D', array=initialise[:, 24]),
+                                           fits.Column(name='brightness', format='D', array=initialise[:, 25]),
                                            fits.Column(name='rho', format='D', array=initialise[:, 26]),
                                            fits.Column(name='parent_index', format='D', array=initialise[:, 27]),
                                            fits.Column(name='orig_index', format='D', array=initialise[:, 28]),
@@ -876,7 +843,7 @@ if __name__ == '__main__':
                   
                 fireball_info= [0, 0, 0, date_info[0], date_info[1], date_info[2]+tk, date_info[3], tk] 
 
-            elif dim == 3 or dim == 5:   # 3D rays
+            elif dim == 3:   # 3D rays
                 obs_info = np.zeros((obs_index_ed - obs_index_st, 7))
                 for i in range(0, obs_index_ed-obs_index_st):
                     ##use table errors
@@ -908,11 +875,11 @@ if __name__ == '__main__':
         # non-linear integration of state, model covariance and then calculates particle likelihood
         if frag: 
             for i in range(n):
-                p_working[i, :] = df.Prdct_Upd(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, i, N, frag, t_end, Q_c_frag, m0_max, reverse, eci_bool)
+                p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c_frag, m0_max, reverse, eci_bool)
         else:
             for i in range(n):
 
-                p_working[i, :] = df.Prdct_Upd(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, i, N, frag, t_end, Q_c, m0_max, reverse, eci_bool)
+                p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c, m0_max, reverse, eci_bool)
 
         comm.Gatherv( p_working, p_all, root=0)
 
@@ -935,89 +902,18 @@ if __name__ == '__main__':
                                                             #  cumulative weight,
                                                             #  col in p_all array]
 
-            # if t!=T-1:   
-                # perform resampling
-
-
-
-    ##            #####################
-            ## FOR NON LOG RESAMPLING
-
-            # w = np.empty([8, N])
-
-            # ## my attempt at getting rid of nan weightings... not so efficient so line 689 still needs to use nansum. 
-            # for i in range(N):
-            #     if np.isnan(p_all[i, 29]):
-            #         p_all[i, 29] = 0.
-            #         p_all[i, :] = p_all[i, :] * 0.
-            #     elif np.isnan(p_all[i, 34]):
-            #         p_all[i, 34] = 0.
-            #         p_all[i, :] = p_all[i, :] * 0.
-            #     w[:, i] = np.array([p_all[i, 29], p_all[i, 34],0., 0., 0., 0., 0., i]).T
-
-            # ## calculate sum of weights
-            # weights_sum_p = np.nansum(w[0, :])
-            # weights_sum_l = np.nansum(w[1, :])
-
-            # ## TODO.. currently permanently set this to false. 
-            # l_weight = False
-
-            # w[2, :] = w[0, :] / weights_sum_p  # fill in normalised sum 
-            # w[3, :] = w[1, :] / weights_sum_l  # fill in normalised sum 
-
-            # ## position vs luminosity relative weighting adjusted. 
-            # ## TODO: check when lum_weighting_coeff = 0, w[3,:] is not used.
-            # w[4, :] = w[2, :]#(w[2, :] + w[3, :])/2# * lum_weighting_coef
-
-            # p_all[:, 35] = w[2, :]      # position weighting
-            # p_all[:, 34] = w[3, :]      # luminous weighting
-            # p_all[:, 29] = w[4, :]      # total weightings to work on
-
-            
-            # if resamp:
-                # w[5, :] = w[4,:]
-
-                # weights_sum = np.sum(w[5, :])
-                # w[5, :] = w[5, :] / weights_sum
-                # w[6, :] = np.cumsum(w[5, :])        #np.cumsum([np.exp(i) for i in w[5, :]])   # fill in cumulative sum
-
-                # ## calculate particle effectiveness for degeneracy
-                # n_eff = 1/np.sum([i**2 for i in w[5, :]])
-                # n_eff_all[t] = n_eff
-                # print('sum of weights: ',weights_sum)
-                # print('effectiveness: ', n_eff/ N * 100, '%')
-
-                # ## resampling
-                # #draw = np.random.uniform(0, 1 , N) # random from normal distributions
-                # draw = np.cumsum([np.ones(N) * 1/N ])- 1./(2*N)
-                # index = np.searchsorted(w[6, :], draw, side='left')
-                # p2 = np.asarray([p_all[int(w[7, index[j]]), :]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
-
-                # #p2[:, 29] = [np.exp(i) for i in p2[:, 29]]
-                # weights_sum = np.sum(p2[:, 29])
-
-                # p2[:, 29] =  p2[:, 29] / weights_sum
-
-            # else:
-            #     print('no resampling performed')
-            #     weights_sum = np.sum(p_all[:, 29])
-
-            #     p_all[:, 29] =  p_all[:, 29] / weights_sum
-
-
-
             #####################
-##            # for log weights calculated in pred_update:
+            # for log weights calculated in particle_propagation:
             w = np.empty([8, N])
             for i in range(N):
-                # print(p_all[i, 29])
-                if np.isnan(p_all[i, 29]):
+                # print(p_all[i, 35])
+                if np.isnan(p_all[i, 35]):
                     p_all[i, :] = p_all[i, :] * 0.
-                    p_all[i, 29] = -5000.
+                    p_all[i, 35] = -5000.
                 elif np.isnan(p_all[i, 34]):
                     p_all[i, :] = p_all[i, :] * 0.
-                    p_all[i, 26] =  -5000.
-                w[:, i] = np.array([p_all[i, 29], p_all[i, 34],0., 0., 0., 0., 0., i]).T
+                    p_all[i, 34] =  -5000.
+                w[:, i] = np.array([p_all[i, 35], p_all[i, 34],0., 0., 0., 0., 0., i]).T
         
             
        
@@ -1146,8 +1042,8 @@ if __name__ == '__main__':
                                            fits.Column(name='Q_cl', format='D', array=p_out[:, 21]),
                                            fits.Column(name='Q_k', format='D', array=p_out[:, 22]),
                                            fits.Column(name='Q_s', format='D', array=p_out[:, 23]),
-                                           fits.Column(name='Q_bright', format='D', array=p_out[:, 24]),
-                                           fits.Column(name='Q_tau', format='D', array=p_out[:, 25]),
+                                           fits.Column(name='Q_tau', format='D', array=p_out[:, 24]),
+                                           fits.Column(name='brightness', format='D', array=p_out[:, 25]),
                                            fits.Column(name='rho', format='D', array=p_out[:, 26]),
                                            fits.Column(name='parent_index', format='D', array=p_out[:, 27]),
                                            fits.Column(name='orig_index', format='D', array=p_out[:, 28]),
