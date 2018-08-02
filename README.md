@@ -8,14 +8,8 @@ Uses particle filter methodology outlined in
 - Python 3
 - Astropy 2.0+
 - MPI4py
+- seaborn
 
-- From Triangulation folder: trajectory_utilities.py, 
-                             dfn_utils.py
-- From Brightflight folder: bf_functions_3d.py, 
-                            ballistic_params.py
-- From Brightflight/particle_filters folder: nrlmsise_00.py, 
-                                             nrlmsise_00_data.py, 
-                                             nrlmsise_00_header.py
 ## Running the program:
 This code ip paralellised using MPI4py. 
 Run in commandline as 
