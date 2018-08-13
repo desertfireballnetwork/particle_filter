@@ -223,7 +223,6 @@ def ParticleFilterParams():
     P = [50., 50., 50., 250., 250., 250.]
     P2 = [50., 50., 50., 250., 250., 250.]
 
-    P = [i**2 for i in P]
     ## Initialise state ranges
 
 
@@ -276,8 +275,6 @@ if __name__ == '__main__':
     size = comm.size        # total number of processes
     rank = comm.Get_rank()        # rank of this process
     status = MPI.Status()   # get MPI status object
-    print(rank, size, status)
-
 
     if rank ==0:
         parser = argparse.ArgumentParser(description='Run particle filter on raw camera files.')
@@ -322,6 +319,12 @@ if __name__ == '__main__':
         reverse = args.time_reverse
 
         import trajectory_utilities as tu
+
+        ## TIMER
+        ## if you would like to time processing clocktime of this code, 
+        ## uncomment all lines with '##TIMER' 
+        # import timeit 
+        # t_start = timeit.default_timer()
 
         if dim==1:
             import geo_1d as df
@@ -405,7 +408,6 @@ if __name__ == '__main__':
                         print(f, 'does not contain timing data and will not be used')
 
             n_obs = len(filenames)
-            print(filenames, n_obs)
 
             ## get data depending on particle filter flavour
             # 1D filter:
@@ -438,16 +440,19 @@ if __name__ == '__main__':
                         data.sort('time')    
 
                         if 'X_eci' in data.colnames:
-                            print('ECI')
+                            print('Running in ECI')
                             [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
                                                    [(data['X_eci'][3] - data['X_eci'][0])/(data['time'][3] - data['time'][0]),
                                                     (data['Y_eci'][3] - data['Y_eci'][0])/(data['time'][3] - data['time'][0]),
                                                     (data['Z_eci'][3] - data['Z_eci'][0])/(data['time'][3] - data['time'][0])],
                                                    t_stack]
                         else:
-                            print('ECEF')
+                            print('Running in ECEF')
                             [x0, v0, date_info] = [[data['X_geo'][0], data['Y_geo'][0], data['Z_geo'][0]],
                                                    [(data['X_geo'][3] - data['X_geo'][0])/(data['time'][3] - data['time'][0]),
+                                        
+
+
                                                     (data['Y_geo'][3] - data['Y_geo'][0])/(data['time'][3] - data['time'][0]),
                                                     (data['Z_geo'][3] - data['Z_geo'][0])/(data['time'][3] - data['time'][0])],
                                                    t_stack]
@@ -577,10 +582,13 @@ if __name__ == '__main__':
         alpha = data['alpha'][0]
         init_info = [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name]
     
-        print('yeahnah', eci_bool)
         ## send it all ranks
         for i in range(1, size):
             comm.send(init_info, dest = i)
+
+        ## TIMER
+        #t_1 = timeit.default_timer()-t_start
+        #print('time to initialise code', t_1)
 
     else:
         [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name] = comm.recv(source=0)
@@ -619,10 +627,14 @@ if __name__ == '__main__':
 
     ##############  Master saves initial timestep  ###########
     if rank ==0:
-        # if -o option used, this overwrites table just initialised with previous file given
-        # p_all = np.empty([N, 42])#, dtype='O')  
+        ## TIMER
+        #t_2 = timeit.default_timer()-t_start - t_1
+        #print('time to initialise particles', t_2)
 
-        if prev_file != '':                 
+        if prev_file != '':       
+            # if -o option used, this overwrites table just initialised with previous file given
+            # p_all = np.empty([N, 42])#, dtype='O')  
+          
             name  = prev_file
             results_list = fits.open(prev_file)
 
@@ -636,26 +648,6 @@ if __name__ == '__main__':
 
             results_prev = Table(results_prev)
             results_prev.remove_columns(['datetime', 'time'])
-            # results_prev['latitude'] = np.deg2rad(results_prev['latitude'])
-            # results_prev['longitude'] = np.deg2rad(results_prev['longitude'])
-            # print('len', N, len(results_prev))
-            # print(results_prev)
-            
-            # p_all = np.asarray(results_prev)
-            # for i in range(len(results_prev)):
-                # print(i)
-                # print('this', np.asarray(results_prev[i]))
-                # p_all[i, :] = np.asarray(results_prev[i])
-                # p_all[i, 31] = np.deg2rad(p_all[i, 31])
-                # p_all[i, 32] = np.deg2rad(p_all[i, 32])
-
-
-            # print()
-
-
-        #TODO: test this!!!
-            # something is wrong when scattering this. For some reason 
-            # p_all to p_working transposes
 
             p_all = np.vstack([ results_prev['X_geo'].data,
                                 results_prev['Y_geo'].data,
@@ -722,9 +714,6 @@ if __name__ == '__main__':
 
             ## create first HDU table and save 
 
-
-
-
             results = fits.BinTableHDU.from_columns([fits.Column(name='time', format='D', array=initialise[:, 42]),
                                            fits.Column(name='datetime', format='25A', array=initialise[:, 43]),
                                            fits.Column(name='X_geo', format='D', array=initialise[:, 0]),
@@ -778,6 +767,10 @@ if __name__ == '__main__':
 
             # as no previous file was given, the first prediction step will be index = 1 in the time steps. 
             t0 = 1
+
+        ## TIMER
+        #t_3 = timeit.default_timer()-t_start - t_2
+        #print('time to initialise table', t_3)
 
         for i in range(1, size):
             comm.send(t0, dest = i)
@@ -848,7 +841,6 @@ if __name__ == '__main__':
                 for i in range(0, obs_index_ed-obs_index_st):
                     ##use table errors
                     obs_info[i,:] = [data['azimuth'][i+obs_index_st], data['altitude'][i+obs_index_st], data['obs_lat'][i+obs_index_st], data['obs_lon'][i+obs_index_st], data['obs_hei'][i+obs_index_st], data['R_azi'][i+obs_index_st], data['R_alt'][i+obs_index_st]]
-                    # print(obs_info)
                     ## use double table errors
                     # obs_info[i,:] = [data['azimuth'][i+obs_index_st], data['altitude'][i+obs_index_st], data['obs_lat'][i+obs_index_st], data['obs_lon'][i+obs_index_st], data['obs_hei'][i+obs_index_st], data['R_azi'][i+obs_index_st]*2, data['R_alt'][i+obs_index_st]*2]
                     ## use 0.1 degrees
@@ -859,6 +851,9 @@ if __name__ == '__main__':
 
             for i in range(1, size):
                 comm.send([obs_info, lum_info, frag, fireball_info], dest = i)
+            
+            ## TIMER
+            #t_pfstart = timeit.default_timer()
 
         else:
             [obs_info, lum_info, frag, fireball_info] = comm.recv(source=0)
@@ -886,100 +881,111 @@ if __name__ == '__main__':
     ##########  Master calculates weights and resamples ########
         if rank ==0:
             print('master collected all ')
+            ## TIMER
+            #t_4 = timeit.default_timer()-t_pfstart
+            #print('time to integrate', t_4)
+
             ## if you want to turn resampling on/off... do it here
             if t_end:
                 resamp = False
             else:
                 resamp = True
-            
-
-            # an array for the weights is created with 5 rows: [pos_weight, 
-                                                            #  lum_weight
-                                                            #  normalised pos_weight,
-                                                            #  normalised lum_weight,
-                                                            #  combined normalised weight,
-                                                            #  exp of combined normalised weight,
-                                                            #  cumulative weight,
-                                                            #  col in p_all array]
 
             #####################
-            # for log weights calculated in particle_propagation:
-            w = np.empty([8, N])
-            for i in range(N):
-                # print(p_all[i, 35])
-                if np.isnan(p_all[i, 35]):
-                    p_all[i, :] = p_all[i, :] * 0.
-                    p_all[i, 35] = -5000.
-                elif np.isnan(p_all[i, 34]):
-                    p_all[i, :] = p_all[i, :] * 0.
-                    p_all[i, 34] =  -5000.
-                w[:, i] = np.array([p_all[i, 35], p_all[i, 34],0., 0., 0., 0., 0., i]).T
-        
+            # resampling for log weights calculated in particle_propagation:
+            if resamp:
+                w = np.empty([8, N])
+
+                ## 'w' - is an array for the weight calculations. 
+                ## Row indices are: [pos_weight, 
+                ##                   lum_weight
+                ##                   normalised pos_weight,
+                ##                   normalised lum_weight,
+                ##                   combined normalised weight,
+                ##                   exp of combined normalised weight,
+                ##                   cumulative weight,
+                ##                   col in p_all array (depreciated)]
+
+                
+                for i in range(N):
+
+                    ## first set any NAN weightings to approx = 0
+                    if np.isnan(p_all[i, 35]):
+                        p_all[i, :] = p_all[i, :] * 0.
+                        p_all[i, 35] = -5000.
+                    elif np.isnan(p_all[i, 34]):
+                        p_all[i, :] = p_all[i, :] * 0.
+                        p_all[i, 34] =  -5000.
+
+                    ## fill in 'w' with position and luminous weightings and particle index
+
+                    w[:, i] = np.array([p_all[i, 35], p_all[i, 34],0., 0., 0., 0., 0., i]).T
             
-       
-            mx_p = max(w[0,:])
-            mx_l = max(w[1,:])
-            weights_sum_p = np.log(np.sum([ np.exp(i - mx_p) for i in w[0, :]])) + mx_p     
-            weights_sum_l = np.log(np.sum([ np.exp(i - mx_l) for i in w[1, :]])) + mx_l       
-            #weights_sqr_sum = sum(w[0, :]**2)
-            # print(mx_p, mx_l, weights_sum_p, weights_sum_l)
+                
+           
+                mx_p = max(w[0,:])
+                mx_l = max(w[1,:])
+                weights_sum_p = np.log(np.sum([ np.exp(i - mx_p) for i in w[0, :]])) + mx_p     
+                weights_sum_l = np.log(np.sum([ np.exp(i - mx_l) for i in w[1, :]])) + mx_l       
+                #weights_sqr_sum = sum(w[0, :]**2)
+                # print(mx_p, mx_l, weights_sum_p, weights_sum_l)
 
 
-            # l_weight = False
+                # l_weight = False
 
 
-            w[2, :] = w[0, :] - weights_sum_p  # fill in normalised sum in log space
-            w[3, :] = w[1, :] - weights_sum_l  # fill in normalised sum in log space
+                w[2, :] = w[0, :] - weights_sum_p  # fill in normalised sum in log space
+                w[3, :] = w[1, :] - weights_sum_l  # fill in normalised sum in log space
 
-            ##TODO: this is where luminosity relative weighting should be adjusted!
-            #w[4, :] = w[2, :] + (w[3, :] * 0.)   
-            #w[4, :] = w[2, :] + (w[3, :] * 1.)    
-            #w[4, :] = w[2, :] + (w[3, :] * 1/5.)   
-            # w[4, :] = w[2, :] + (w[3, :] * 1/10.)    
-            #w[4, :] = w[2, :] + (w[3, :] * 1/50. ) 
-            #w[4, :] = w[2, :] + (w[3, :] * 1/100.)    
-            # w[4, :] = w[2, :] + (w[3, :] * 1/1000. )   
-            w[4, :] = [np.log(np.exp(w[2, i]) * np.exp(w[3, i]) * lum_weighting_coef) for i in range(N)]
-            # print(w[4, 0], np.exp(w[2, 0]), np.exp(w[3, 0]) , lum_weighting_coef)
-            # print(w[2, 0] , w[3, 0])
-            # print(w)
-            # w[4, :] = w[2, :]
+                ##TODO: this is where luminosity relative weighting should be adjusted!
+                #w[4, :] = w[2, :] + (w[3, :] * 0.)   
+                #w[4, :] = w[2, :] + (w[3, :] * 1.)    
+                #w[4, :] = w[2, :] + (w[3, :] * 1/5.)   
+                # w[4, :] = w[2, :] + (w[3, :] * 1/10.)    
+                #w[4, :] = w[2, :] + (w[3, :] * 1/50. ) 
+                #w[4, :] = w[2, :] + (w[3, :] * 1/100.)    
+                # w[4, :] = w[2, :] + (w[3, :] * 1/1000. )   
+                w[4, :] = [np.log(np.exp(w[2, i]) * np.exp(w[3, i]) * lum_weighting_coef) for i in range(N)]
+                # print(w[4, 0], np.exp(w[2, 0]), np.exp(w[3, 0]) , lum_weighting_coef)
+                # print(w[2, 0] , w[3, 0])
+                # print(w)
+                # w[4, :] = w[2, :]
 
-            mx = max(w[4,:])
-            weights_sum = np.log(np.sum([ np.exp(i - mx) for i in w[4, :]])) + mx   
-            # print(mx, weights_sum)
-            
+                mx = max(w[4,:])
+                weights_sum = np.log(np.sum([ np.exp(i - mx) for i in w[4, :]])) + mx   
+                # print(mx, weights_sum)
+                
 
-            w[4, :] = w[4, :] - weights_sum
+                w[4, :] = w[4, :] - weights_sum
 
-            p_all[:, 35] = w[2, :]
-            p_all[:, 34] = w[3, :]
-            p_all[:, 29] = w[4, :]            
+                p_all[:, 35] = w[2, :]
+                p_all[:, 34] = w[3, :]
+                p_all[:, 29] = w[4, :]            
 
-            w[5, :] = [exp(i) for i in w[4,:]]  # take exp of normalised sum
+                w[5, :] = [exp(i) for i in w[4,:]]  # take exp of normalised sum
 
-            w[6, :] = np.cumsum(w[5, :])   # fill in cumulative sum
+                w[6, :] = np.cumsum(w[5, :])   # fill in cumulative sum
 
-            ## calculate particle effectiveness for degeneracy
-            n_eff = 1/np.sum(w[5, :]**2)
-            #n_eff_all[t] = n_eff
-            print('sum of weights: ', weights_sum)
-            print('effectiveness: ', n_eff/ N * 100, '%')
+                ## calculate particle effectiveness for degeneracy
+                n_eff = 1/np.sum(w[5, :]**2)
+                #n_eff_all[t] = n_eff
+                print('sum of weights: ', weights_sum)
+                print('effectiveness: ', n_eff/ N * 100, '%')
 
-            ## resampling
-            draw = np.random.uniform(0, 1 , N)
-            index = np.searchsorted(w[6, :], draw, side='left')
-            # print(w[7], index,N)
-            p2 = np.asarray([p_all[int(w[7, index[j]])]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
+                ## resampling
+                draw = np.random.uniform(0, 1 , N)
+                index = np.searchsorted(w[6, :], draw, side='left')
+                # print(w[7], index,N)
+                p2 = np.asarray([p_all[int(w[7, index[j]])]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
 
-            #p2[:, 29] = np.asarray([w[4, w[7, index[j]]]  for j in range(N)]) 3 should do the same as line "p_all[:, 29] = w[4, :]"
-            mx = max(p2[:, 29])
-            weights_sum = np.log(np.sum([ np.exp(i - mx) for i in p2[:, 29]])) + mx
+                #p2[:, 29] = np.asarray([w[4, w[7, index[j]]]  for j in range(N)]) 3 should do the same as line "p_all[:, 29] = w[4, :]"
+                mx = max(p2[:, 29])
+                weights_sum = np.log(np.sum([ np.exp(i - mx) for i in p2[:, 29]])) + mx
 
-            p2[:, 29] =  [exp(i-weights_sum) for i in p2[:, 29]]
-#
+                p2[:, 29] =  [exp(i-weights_sum) for i in p2[:, 29]]
+    #
 
-            p_all = np.asarray(copy.deepcopy(p2))
+                p_all = np.asarray(copy.deepcopy(p2))
 
 
 
@@ -1003,6 +1009,10 @@ if __name__ == '__main__':
             print('mean sigma: ', avg_sigma * 1e6)
             print('mean M_v: ', avg_mag)
             print('observed M_vs: ', lum_info)
+
+            ## TIMER
+            #t_5 = timeit.default_timer()-t_pfstart-t_4
+            #print('time to resample', t_5)
             
             # save resulting table in HDU fits file
             p_out = np.hstack((p_all, 
@@ -1069,6 +1079,10 @@ if __name__ == '__main__':
             # end this iteration
             print("now I've done collective things, start again. end timestep #", t, "at time ", tk, "secs")
         
+            ## TIMER
+            #t_6 = timeit.default_timer()-t_pfstart-t_5
+            #print('time to resample', t_6)
+
         comm.Barrier()  ## all ranks are held while master performs resampling.
 
     print("we're all happy workers :-). Now saving all data to one table")
@@ -1156,53 +1170,3 @@ def stdout_redirected(to=os.devnull, stdout=None):
 
 ##########  End of particle filter code ########
 
-
-
-
-##### removed from weighting calculations
-            #if weights_sum <-50:
-#                print('sum of weights: ', weights_sum )
-#                print('error: sum of weights is zero')
-#                l_weight = True
-#                continue
-
-                #MPI.COMM_WORLD.Abort(1)
-                #sys.exit()
-            
-           # elif weights_sum <0:
-           #     l_weight = True
-           #     print("increasing errors")
-
-           #     ## calculate particle effectiveness for degeneracy
-           #     #n_eff = 1/weights_sqr_sum
-           #     #n_eff_all[t] = n_eff
-           #     print('sum of weights: ', weights_sum)
-           #     #print('effectiveness: ', n_eff)
-           #     w[1, :] = w[0, :] - weights_sum  # fill in normalised sum in log space
-           #     w[2, :] = [exp(i) for i in w[1,:]]  # take exp of normalised sum
-           #     w[3, :] = np.cumsum(w[2, :])   # fill in cumulative sum
-
-
-                #####################
-    ##            # for log resampling:
-                # w[5, :] = [np.log(i) for i in w[4,:]]  # take exp of normalised sum 
-
-                # mx = max(w[5,:])
-                # weights_sum = np.log(np.sum([ np.exp(i - mx) for i in w[5, :]])) + mx   
-                # w[5, :] = w[5, :] - weights_sum 
-                # w[6, :] = np.cumsum([np.exp(i) for i in w[5, :]])   # fill in cumulative sum
-                # n_eff = 1/np.sum([np.exp(i)**2 for i in w[5, :]])
-                # # calculate particle effectiveness for degeneracy
-                # n_eff_all[t] = n_eff
-                # print('sum of weights: ',weights_sum)
-                # print('effectiveness: ', n_eff/ N * 100, '%')
-
-                # # resampling
-                # draw = np.random.uniform(0, 1 , N) # random from normal distributions
-                # draw = np.cumsum([np.ones(N) * 1/N ])- 1./(2*N)
-                # index = np.searchsorted(w[6, :], draw, side='left')
-                # p2 = np.asarray([p_all[w[7, index[j]], :]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
-
-                # p2[:, 29] = [np.exp(i) for i in p2[:, 29]]
-                # weights_sum = np.nansum(p2[:, 29])
-                # p2[:, 29] =  p2[:, 29] / weights_sum

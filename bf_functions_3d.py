@@ -1216,7 +1216,7 @@ def Q_mx_3d(t1, t2, init_x, mu, po, grav, Qc, rev=False):
     param = [length, f, Qc] 
     calc_time = [0, abs(t1-t2)]
     with stdout_redirected():
-        Qd = integrate.odeint(Qd_2d_integ, Qd0, calc_time, args = (param,))#, mxstep=10)
+        Qd = integrate.odeint(Qd_2d_integ, Qd0, calc_time, args = (param,), mxstep=10)
     Qd = np.reshape(Qd[1, :], (length, length))
     # Qd = np.diag(Qd)
     
@@ -1282,7 +1282,7 @@ def Q_mx_2d(t1, t2, init_x, mu, po, Qc):
 
     param = [length, f, Qc] 
     with stdout_redirected():
-        Qd = integrate.odeint(Qd_2d_integ, Qd0, [t1, t2], args = (param,))#, mxstep=10)
+        Qd = integrate.odeint(Qd_2d_integ, Qd0, [t1, t2], args = (param,), mxstep=10)
     Qd = np.reshape(Qd[1, :], (length, length))
     Qd = np.diag(Qd) 
 
