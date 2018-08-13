@@ -945,11 +945,11 @@ if __name__ == '__main__':
                 #w[4, :] = w[2, :] + (w[3, :] * 1/50. ) 
                 #w[4, :] = w[2, :] + (w[3, :] * 1/100.)    
                 # w[4, :] = w[2, :] + (w[3, :] * 1/1000. )   
-                w[4, :] = [np.log(np.exp(w[2, i]) * np.exp(w[3, i]) * lum_weighting_coef) for i in range(N)]
+                # w[4, :] = [np.log(np.exp(w[2, i]) * np.exp(w[3, i]) * lum_weighting_coef) for i in range(N)]
                 # print(w[4, 0], np.exp(w[2, 0]), np.exp(w[3, 0]) , lum_weighting_coef)
                 # print(w[2, 0] , w[3, 0])
                 # print(w)
-                # w[4, :] = w[2, :]
+                w[4, :] = w[2, :]
 
                 mx = max(w[4,:])
                 weights_sum = np.log(np.sum([ np.exp(i - mx) for i in w[4, :]])) + mx   
