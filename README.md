@@ -3,6 +3,11 @@ Uses particle filter methodology outlined in
 [Arulampalam et al., 2002](https://ieeexplore.ieee.org/abstract/document/978374/), and is detailed in 
 [Sansom et al., 3D Meteoroid Trajectories, ICARUS, submitted](https://arxiv.org/abs/1802.02697)
 
+Testing of resampling method using logarithmis weights is still ongoing, as is the method of combining positional and luminous weightings. 
+
+As this software is in development, please consider contacting me to help determine the best run options for your data. 
+I am also happy to help with interpretation and visualisation of results.
+
 
 ## Requirements:
 - Python 3
@@ -144,6 +149,4 @@ If you use this particle filter tool for your research please give credit by cit
 
 [Sansom et al., 3D Meteoroid Trajectories, ICARUS, submitted](https://arxiv.org/abs/1802.02697)
 
-As this software is in development, please consider contacting me to help determine the best run options for your data. 
-I am also happy to help with interpretation and visualisation of results.
 
