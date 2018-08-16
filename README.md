@@ -6,7 +6,7 @@ Uses particle filter methodology outlined in
 Testing of resampling method using logarithmis weights is still ongoing, as is the method of combining positional and luminous weightings. 
 
 As this software is in development, please consider contacting me to help determine the best run options for your data. 
-I am also happy to help with interpretation and visualisation of results.
+I am also happy to help with interpretation and visualisation of results, as well as helping formatting input table data for compatability.
 
 
 ## Requirements:
