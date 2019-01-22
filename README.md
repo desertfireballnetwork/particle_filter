@@ -1,7 +1,7 @@
 # Particle filter for estimating fireball trajectories
 Uses particle filter methodology outlined in
 [Arulampalam et al., 2002](https://ieeexplore.ieee.org/abstract/document/978374/), and is detailed in 
-[Sansom et al., 3D Meteoroid Trajectories, ICARUS, submitted](https://arxiv.org/abs/1802.02697)
+[Sansom et al. 2019, 3D Meteoroid Trajectories, ICARUS, Volume 321, Pages 388-406](https://doi.org/10.1016/j.icarus.2018.09.026) (see also [arXiv](https://arxiv.org/abs/1802.02697) preprint).
 
 Testing of resampling method using logarithmis weights is still ongoing, as is the method of combining positional and luminous weightings. 
 
