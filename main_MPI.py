@@ -323,20 +323,10 @@ if __name__ == '__main__':
         prev_file = args.old
         reverse = args.time_reverse
 
-        import trajectory_utilities as tu
-
-        ## TIMER
-        ## if you would like to time processing clocktime of this code, 
-        ## uncomment all lines with '##TIMER' 
-        # import timeit 
-        # t_start = timeit.default_timer()
-
         if dim==1:
             import geo_1d as df
         elif dim==2 or dim==4:
             import geo_3d as df
-        # elif dim == 4:
-        #     import geo_3d_eci as df
         elif dim==3:
             import full_3d_ECI as df
 
@@ -396,7 +386,7 @@ if __name__ == '__main__':
             n_obs = len(filenames)
 
             data, t0, T0, eci_bool = bf.Fireball_Data(filenames,  reverse)
-            # print(data, t0, T0, eci_bool)
+
             yday = T0.yday.split(':')
             y = float(yday[0])
             d = float(yday[1])
@@ -408,10 +398,9 @@ if __name__ == '__main__':
             # 1D filter:
             P_test=0
             if dim == 1:
-                # [data, date_info] = bf.DFS_Fireball_Data(filenames, pse, reverse)
-
                 x0 = data['dist_from_start'][0]
 
+                # currently first data point has no velocity, so use first velocity value as close approximation.
                 v0 = 0
                 i = 0
                 while v0<1:
@@ -419,15 +408,8 @@ if __name__ == '__main__':
                         v0 = data['D_DT'][i]
                     else:
                         i+=1
-                ####
-                # v0 =np.nanmean(data['D_DT'][:10])
-                # P_test = np.nanstd(data['D_DT'][:10])
-                
 
-                
-                
-                     # currently first data point has a nan velocity, so use second as close approximation.
-
+                     
                 out_name = data['datetime'][0].split('T')[0].replace('-','') + '_1D'
 
             else:
@@ -436,15 +418,8 @@ if __name__ == '__main__':
                     ## t0 is start of filter, T0 is start of fireball
 
                     if dim==2:
-                        # data, t0, T0, eci_bool = bf.Geo_Fireball_Data(filenames, pse, reverse)
                         out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Dtriangulated'
-                        # if n_obs>1:  
-                        #     [x0, v0, x0_err, v0_err, date_info] = bf.RoughTriangulation(data, t0, reverse, eci_bool)
-                        #     if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
-                        #     else: date_info = np.append(date_info, T0)
-                        # else:
-                    
-                        
+
                         data.sort('time')    
 
                         if 'X_eci' in data.colnames:
@@ -467,27 +442,6 @@ if __name__ == '__main__':
                         
                         
 
-                    # if dim==4: 
-
-                    #     data, t0, T0, eci_bool = bf.Geo_Fireball_Data_newtriang(filenames, pse, reverse)
-                        
-                    #     yday = T0.yday.split(':')
-                    #     y = float(yday[0])
-                    #     d = float(yday[1])
-                    #     s = float(yday[2]) * 60 * 60 + float(yday[3]) * 60 + float(yday[4])
-                    #     t_stack = np.vstack((y, d, s))
-                    #     # data.sort('time')    
-                    #     # if reverse:
-                    #     #     data.reverse()
-
-                    #     out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Dtriangulated'
-                    #     [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
-                    #                            [data['DX_DT_eci'][0], data['DY_DT_eci'][0], data['DZ_DT_eci'][0]],
-                    #                             t_stack]
-
-                    #     if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
-                    #     else: date_info = np.append(date_info, T0)
-
                 elif dim==3 :  # 3D rays
                     if n_obs>1:
                         ## t0 is start of filter, T0 is start of fireball
@@ -499,11 +453,6 @@ if __name__ == '__main__':
                             data.reverse()
                         [x0, v0, x0_err, v0_err, date_info] = bf.RoughTriangulation(data, t0, reverse, eci_bool)
 
-                        # data.sort('time')    
-                        # if reverse:
-                        #     data.reverse()
-                        # if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
-                        # else: date_info = np.append(date_info, T0)
 
                     else: 
                         print('you need at least two camera files for your choice of -i option.')
@@ -528,7 +477,6 @@ if __name__ == '__main__':
             for i in range(1, len(data_times)):
                 if data_times[i] != float(data_t[0, -1]):
                         data_t = np.hstack((data_t, [[float(data_times[i])], [str(data['datetime'][i])], [int(i)]]))
-            # print(data[0], data[-1], x0, np.linalg.norm(v0))
 
         else:
             print('not a valid input directory')

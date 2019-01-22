@@ -20,6 +20,8 @@ from astropy.time import Time, TimeDelta
 from astropy import units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 
+#own
+import trajectory_utilities as tu
 
 #------------------------------------------------------------------------------
 # hack to fix lsoda problem in nonlinear integration
@@ -256,7 +258,7 @@ def RoughTriangulation(data, t0, rev=False, eci_bool=False):
     # then Pos_pw needs to be converted to ECI:
     if eci_bool:
         t_jd = T0.jd + T_rel_crop / (24*60*60)
-        Pos_pw = ECEF2ECI_pos(Pos_pw, t_jd)
+        Pos_pw = tu.ECEF2ECI_pos(Pos_pw, t_jd)
 
     def residuals(X, Pos_pw, dt):
         X = np.vstack((X)); [x0, v0, a0] = [X[:3], X[3:6], X[6]]
@@ -290,9 +292,10 @@ def Fireball_Data(filenames, reverse=False):
        This is where a list of files gets read into astropy data tables
        For every input file if observation times are reliable, the 
        observer lat,long,height are recorded, along with any pre triangulated data
-       
+
     """
     from dfn_utils import is_type_pipeline, has_reliable_timing
+
 
     data_packet = []
     data_tables = []
@@ -305,7 +308,7 @@ def Fireball_Data(filenames, reverse=False):
     approx_Data = Table.read(filenames[0], format='ascii.ecsv', guess=False, delimiter=',', data_start = 1, data_end = 2)
 
     # Compute the transformation matrix
-    Trans = ECEF2ENU(np.deg2rad(approx_Data['longitude'][0]), np.deg2rad(approx_Data['latitude'][0])) 
+    Trans = tu.ECEF2ENU(np.deg2rad(approx_Data['longitude'][0]), np.deg2rad(approx_Data['latitude'][0])) 
 
     for camfile in filenames:
         # use this if statement to check the incoming ecsv files are (reliable) datafiles. Here we just check that timing uncertainties are sufficient for useable data
@@ -330,7 +333,7 @@ def Fireball_Data(filenames, reverse=False):
                                 np.sin(alt)))
                                 
             # Convert from ENU to ECEF coordinates
-            UV_ECEF = np.dot(ENU2ECEF(obs_lon, obs_lat), UV_ENU)
+            UV_ECEF = np.dot(tu.ENU2ECEF(obs_lon, obs_lat), UV_ENU)
 
             # Create the table columns:
             
@@ -440,7 +443,7 @@ def Fireball_Data(filenames, reverse=False):
             gamma = Column(name='gamma', data=temp)
 
             ## calculate gravity component --> (grav * sin(gamma))
-            [G, M] = grav_params()
+            [G, M] = tu.grav_params()
             g_sin_gamma = Column(name='g_sin_gamma', data=[G*M*sin(temp[i])/(ENU[2, i]**2) for i in range(len(ENU[0]))])
 
             ## check whether there is a luminosity column to import and import data whether complete or nan values.
@@ -777,51 +780,3 @@ def min_fun(x, vvals, yvals):
         res += pow(2 * x[0] * exp(-yvals[i]) - (scipy.special.expi(x[1]) - scipy.special.expi(x[1]* vvals[i]**2) ) * exp(-x[1]) , 2)
     return res
 
-#------------------------------------------------------------------------------
-# Coordinate transforms
-#------------------------------------------------------------------------------
-
-def ECEF2ENU(lon, lat):
-    """
-    # convert to local ENU coords
-    # http://www.navipedia.net/index.php/Transformations_between_ECEF_and_ENU_coordinates
-    # Title     Transformations between ECEF and ENU coordinates
-    # Author(s)   J. Sanz Subirana, J.M. Juan Zornoza and M. Hernandez-Pajares, Technical University of Catalonia, Spain.
-    # Year of Publication     2011 
-
-    # use long to make greenwich mean turn to meridian: A clockwise rotation over the z-axis by and angle to align the east-axis with the x-axis
-    # use lat to rotate z to zenith
-    """
-    
-    ECEF2ENU = np.array([[-np.sin(lon)         , np.cos(lon)            , 0], 
-        [-np.cos(lon)*np.sin(lat) , -np.sin(lon) * np.sin(lat), np.cos(lat)],
-        [np.cos(lon) * np.cos(lat), np.sin(lon) * np.cos(lat) , np.sin(lat)]])
-
-    return ECEF2ENU
-
-def ECEF2ECI_pos(Pos_ECEF, t):
-
-    T = Time(t, format='jd', scale='utc')
-    
-    Pos_ECEF_SC = ITRS(x=Pos_ECEF[0] * u.m, y=Pos_ECEF[1] * u.m, 
-        z=Pos_ECEF[2] * u.m, obstime=T)
-    Pos_ECI_SC = Pos_ECEF_SC.transform_to(GCRS(obstime=T))
-    Pos_ECI = np.vstack(Pos_ECI_SC.cartesian.xyz.value)
-
-    return Pos_ECI
-
-def grav_params():
-    """gravitational constant and mass of earth.
-    """
-    G=6.6726e-11    # N-m2/kg2
-    M=5.98e24      # kg Mass of the earth 
-    return G, M
-
-def ENU2ECEF(lon, lat):
-    """transform of ENU2ECEF
-    """
-    lon = float(lon); lat = float(lat)
-    C_ENU2ECEF = np.array([[-np.sin(lon), -np.sin(lat) * np.cos(lon), np.cos(lat) * np.cos(lon)],
-                           [ np.cos(lon), -np.sin(lat) * np.sin(lon), np.cos(lat) * np.sin(lon)],
-                           [     0      ,         np.cos(lat)       ,        np.sin(lat)       ]])
-    return C_ENU2ECEF

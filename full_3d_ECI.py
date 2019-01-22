@@ -220,16 +220,16 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
      """
     if X[6] < 0:
 
-        X[35] = 5000.
-        X[34] = 5000.
+        X[35] = 0.
+        X[34] = 0.
         return X
 
     elif X[6] > 1.1 *m0_max and not reverse:
     ## dont allow mass to be greater than max mass if predicting 
     ## formward in time - give v. low weighting
 
-        pos_weight = 5000.  
-        lum_weight = 5000.  
+        pos_weight = 0.  
+        lum_weight = 0.  
 
         raise ValueError('cannot have a negative mass')
 
@@ -397,15 +397,15 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max, reverse, T_jd):
 
     if X[6] < 0 and t_end != True:
     ## if mass is <0 before the final timestep, give v. low weighting
-        pos_weight -= 5000
-        lum_weight -= 5000
+        pos_weight = 0.
+        lum_weight = 0.
 
     elif X[6] > 1.1 *m0_max and not reverse:
     ## dont allow mass to be greater than max mass if predicting 
     ## formward in time - give v. low weighting
 
-        pos_weight -= 5000  
-        lum_weight -= 5000    
+        pos_weight = 0.
+        lum_weight = 0.  
     
     else:
         ## if there are luminosities to compare with, calculate the luminous weighting
@@ -444,7 +444,7 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max, reverse, T_jd):
                 #     #lum_weight += multi_var_gauss(z_hat.T, Z.T, cov, n_obs) 
                 #     lum_weight += Gaussian(z_hat[0,i], Z[0,i], R[i]) 
 
-                lum_weight += Gaussian(z_hat[0,i], Z[0,i], R[i]) 
+                lum_weight *= Gaussian(z_hat[0,i], Z[0,i], R[i]) 
 
         ## position observations
         observation = obs_info[:, 0:2]
@@ -465,7 +465,7 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max, reverse, T_jd):
             Z = np.array([[obs_az], [obs_el]])
             cov = np.array([obs_az_error**2, obs_el_error**2])
             cov = np.asmatrix(np.diag(cov))
-            pos_weight += multi_var_gauss_angles(z_hat, Z, cov, 2)
+            pos_weight *= multi_var_gauss_angles(z_hat, Z, cov, 2)
 
 
     return pos_weight, lum_weight
@@ -481,14 +481,8 @@ def multi_var_gauss_angles(pred, mean, cov, n_obs):
     diff = np.asmatrix(abs(diff))
     
     ## multivariate equation:
-    likelihood = pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
+    return pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
 
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    if likelihood <= 0 or np.isnan(likelihood):
-        return -50000
-    else:
-        # return log of likelihoods
-        return np.log(likelihood)
   
 def Gaussian(z_hat, Z, R):
     """performs Gaussian PDF. 
@@ -500,14 +494,7 @@ def Gaussian(z_hat, Z, R):
     diff = (z_hat - Z)
 
     ## calculates the probability of x for 1-dim Gaussian with mean mu and var. sigma
-    likelihood = exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
-    
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    if likelihood <= 0 or np.isnan(likelihood):
-        return -50000
-    else:
-        # return log of likelihoods
-        return np.log(likelihood)
+    return exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
 
 def Gaussian_angles(z_hat, Z, R):
     """performs Gaussian PDF. 
@@ -520,14 +507,8 @@ def Gaussian_angles(z_hat, Z, R):
     diff = (diff + np.pi) % (np.pi*2) - np.pi  # computes the angular distance through pi
 
     ## calculates the probability of x for 1-dim Gaussian with mean mu and var. sigma
-    likelihood = exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
+    return exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
     
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    if likelihood <= 0 or np.isnan(likelihood):
-        return -5000
-    else:
-        # return log of likelihoods
-        return np.log(likelihood)
 
 def rand_skew_norm(fAlpha, fLocation = 0., var = 1., scale = 10.):
 

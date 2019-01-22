@@ -471,9 +471,8 @@ def multi_var_gauss(pred, mean, cov, n_obs):
 
     
     ## multivariate equation:
-    likelihood = pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
+    return pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
 
-    return likelihood
   
 def Gaussian(z_hat, Z, R):
     """performs Gaussian PDF. 
@@ -485,9 +484,8 @@ def Gaussian(z_hat, Z, R):
     diff = (z_hat - Z)
 
     ## calculates the probability of x for 1-dim Gaussian with mean mu and var. sigma
-    likelihood = exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
+    return exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
     
-    return likelihood
 
 
 def rand_skew_norm(fAlpha, fLocation = 0., var = 1., scale = 10.):

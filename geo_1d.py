@@ -413,15 +413,8 @@ def Gaussian(z_hat, Z, R):
     diff = (z_hat - Z)
 
     ## calculates the probability of x for 1-dim Gaussian with mean mu and var. sigma
-    likelihood = exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
-    
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    # if likelihood <= 0 or np.isnan(likelihood):
-    #     return 0.
-    # else:
-    #     ## return log of likelihoods
-    #     return  np.log(likelihood) 
-    return  likelihood
+    return exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
+
 
 def multi_var_gauss(pred, mean, cov, n_obs):
     """performs multivariate Gaussian PDF."""
@@ -432,15 +425,8 @@ def multi_var_gauss(pred, mean, cov, n_obs):
     diff = np.asmatrix(abs(diff))
     
     ## multivariate equation:
-    likelihood = pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
-    
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    # if likelihood <= 0 or np.isnan(likelihood):
-    #     return -5000.
-    # else:
-    #     ## return log of likelihoods
-    #     return  np.log(likelihood)
-    return  likelihood
+    return pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
+
 
 def rand_skew_norm(fAlpha, fLocation = 0., var = 1., scale = 10.):
 
