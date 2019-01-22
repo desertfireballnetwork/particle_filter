@@ -219,7 +219,18 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
         eci_bool:BOOL  : unused in this dim option
      """
     if X[6] < 0:
-        print(X)
+
+        X[35] = 5000.
+        X[34] = 5000.
+        return X
+
+    elif X[6] > 1.1 *m0_max and not reverse:
+    ## dont allow mass to be greater than max mass if predicting 
+    ## formward in time - give v. low weighting
+
+        pos_weight = 5000.  
+        lum_weight = 5000.  
+
         raise ValueError('cannot have a negative mass')
 
     ###### Prediction #####
@@ -252,7 +263,7 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
 
     ## discretisation of process noise covariance:
     Qc = copy.deepcopy(Q_c) 
-    Q_d = bf.Q_mx_3d(tkm1, tk,  init_x, mu, po, grav, Qc, reverse)
+    Q_d = bf.Q_mx_3d(tkm1, tk,  init_x, mu, po, Qc, reverse)
     X[13:26] = Q_d
 
     ## add noise to states
@@ -381,20 +392,20 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max, reverse, T_jd):
 
 
     ## initialise with equal weightings
-    pos_weight = 1./N 
-    lum_weight = 1./N
+    pos_weight = X[35]
+    lum_weight = X[34]
 
     if X[6] < 0 and t_end != True:
     ## if mass is <0 before the final timestep, give v. low weighting
-        pos_weight = -5000
-        lum_weight = -5000
+        pos_weight -= 5000
+        lum_weight -= 5000
 
     elif X[6] > 1.1 *m0_max and not reverse:
     ## dont allow mass to be greater than max mass if predicting 
     ## formward in time - give v. low weighting
 
-        pos_weight = -5000  
-        lum_weight = -5000    
+        pos_weight -= 5000  
+        lum_weight -= 5000    
     
     else:
         ## if there are luminosities to compare with, calculate the luminous weighting

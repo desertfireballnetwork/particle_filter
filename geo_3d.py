@@ -79,7 +79,7 @@ import bf_functions_3d as bf
 import trajectory_utilities as tu
 
 def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False):
-        """ create a random particle to represent a meteoroid - 
+    """ create a random particle to represent a meteoroid - 
         random distance along path, mass, velocity, ablation parameter 
         and shape-density parameter are created with Q_c noise
         according to global set ranges
@@ -253,7 +253,7 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
 
     ## discretisation of process noise covariance:
     Qc = copy.deepcopy(Q_c)
-    Q_d = bf.Q_mx_3d(tkm1, tk,  init_x, mu, po, grav, Qc, reverse)
+    Q_d = bf.Q_mx_3d(tkm1, tk,  init_x, mu, po, Qc, reverse)
 
     X[13:26] = Q_d
 
@@ -265,7 +265,7 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
     X[4] = X[4] + random.gauss(0, sqrt(abs(X[17]))) # y velocity
     X[5] = X[5] + random.gauss(0, sqrt(abs(X[18]))) # z velocity
     
-     if frag:
+    if frag:
         X[3] = rand_skew_norm(-3, X[3], sqrt(X[16])) # x velocity
         X[4] = rand_skew_norm(-3, X[4], sqrt(X[17])) # y velocity
         X[5] = rand_skew_norm(-3, X[5], sqrt(X[18])) # z velocity
@@ -384,15 +384,15 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max,reverse=False, eci_boo
 
     if X[6] < 0 and t_end != True:
     ## if mass is <0 before the final timestep, give v. low weighting
-        pos_weight = -5000
-        lum_weight = -5000
+        pos_weight = 0.
+        lum_weight = 0.
 
     elif X[6] > 1.1 *m0_max and not reverse:
     ## dont allow mass to be greater than max mass if predicting 
     ## formward in time - give v. low weighting
 
-        pos_weight = -5000
-        lum_weight = -5000    
+        pos_weight = 0.
+        lum_weight = 0.    
     
     else:
         ## if there are luminosities to compare with, calculate the luminous weighting
@@ -420,18 +420,18 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max,reverse=False, eci_boo
                 #     ##     anything else is going to return the default value 
                 #     ##     of 1/N (above)
 
-                #     lum_weight += -5000.
+                #     lum_weight *= 0.
 
                 #     ## (2) other option is to calculate a skew normal distribution. 
                 #     ## this will unfavour really high values.
-                #     ## lum_weight += skew_norm_pdf(z_hat[0, i],Z[ 0, i],5,-3)
+                #     ## lum_weight *= skew_norm_pdf(z_hat[0, i],Z[ 0, i],5,-3)
 
                 # else:
                 #     # seems to be a problem with multivariate Gaus calcultation...
-                #     #lum_weight += multi_var_gauss(z_hat.T, Z.T, cov, n_obs) 
-                #     lum_weight += Gaussian(z_hat[0,i], Z[0,i], R[i]) 
+                #     #lum_weight *= multi_var_gauss(z_hat.T, Z.T, cov, n_obs) 
+                #     lum_weight *= Gaussian(z_hat[0,i], Z[0,i], R[i]) 
 
-                lum_weight += Gaussian(z_hat[0,i], Z[0,i], R[i]) 
+                lum_weight *= Gaussian(z_hat[0,i], Z[0,i], R[i]) 
 
         ## position observations
         observation = obs_info[:, 0:3]
@@ -457,7 +457,7 @@ def Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max,reverse=False, eci_boo
         Z = np.asmatrix(Z)
         cov = np.asmatrix(np.diag(R))
 
-        pos_weight += multi_var_gauss(z_hat.T, Z.T, cov, n_obs)
+        pos_weight *= multi_var_gauss(z_hat.T, Z.T, cov, n_obs)
 
     return pos_weight, lum_weight
 
@@ -468,16 +468,12 @@ def multi_var_gauss(pred, mean, cov, n_obs):
     inv_cov = np.linalg.inv(cov)
     diff = pred - mean
     diff = np.asmatrix(abs(diff))
+
     
     ## multivariate equation:
     likelihood = pow((2*np.pi), -n_obs/2) * pow(det_cov, -.5) * np.exp(-.5*diff.T*inv_cov * diff)
-    
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    if likelihood <= 0 or np.isnan(likelihood):
-        return -5000.
-    else:
-        ## return log of likelihoods
-        return np.log(likelihood)
+
+    return likelihood
   
 def Gaussian(z_hat, Z, R):
     """performs Gaussian PDF. 
@@ -491,12 +487,7 @@ def Gaussian(z_hat, Z, R):
     ## calculates the probability of x for 1-dim Gaussian with mean mu and var. sigma
     likelihood = exp(- 0.5 * (np.dot(diff, diff.transpose())) / R) / sqrt(2.0 * pi * R)
     
-    ## if likelihood is too small (<1e-300 I think is the python limit) or nan, set to ~0.
-    if likelihood <= 0 or np.isnan(likelihood):
-        return -5000.
-    else:
-        ## return log of likelihoods
-        return np.log(likelihood)
+    return likelihood
 
 
 def rand_skew_norm(fAlpha, fLocation = 0., var = 1., scale = 10.):
@@ -534,7 +525,7 @@ def skew_norm_pdf(x,e=0,w=1,a=0):
     ## if likelihood -ve, set to ~0.
     if likelihood <= 0 or np.isnan(likelihood):
         print('caught a -ve likelihood in skew. setting to ~0')
-        return np.exp(-500)
+        return 0.
     else:
         ## return log of likelihoods
         return likelihood
