@@ -73,14 +73,14 @@ from numpy.linalg import norm
 # Astropy
 from astropy.table import Table, Column, join, hstack
 import astropy.units as u
-from astropy.time import TimeDelta
+from astropy.time import TimeDelta, Time
 
 # own
 import bf_functions_3d as bf
 import trajectory_utilities as tu
 
 
-def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False):
+def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, T0, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False, reverse=False):
     """ create a random particle to represent a meteoroid - 
         random distance along path, mass, velocity, ablation parameter 
         and shape-density parameter are created with Q_c noise
@@ -120,7 +120,7 @@ def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3
     X[4] = random.gauss(v0[1], P[4]) # initial velocity in y using Gaussian pdf. P values are already sqrt(cov)
     X[5] = random.gauss(v0[2], P[5]) # initial velocity in z using Gaussian pdf. P values are already sqrt(cov)
 
-    T_jd = date_info[3].jd 
+    T_jd = Time(date_info[3]) + TimeDelta(T0, format='sec')
 
     if eci_bool:
         X[36:39] = copy.deepcopy(X[0:3])    # set X, Y, Z  in ECI
@@ -134,6 +134,7 @@ def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3
     else:
         ## convert X, Y, Z positions from ECEF to ECI and set. 
         pos, vel = tu.ECEF2ECI(np.vstack((X[0], X[1], X[2])), np.vstack((X[3], X[4], X[5])), T_jd)
+        
         X[36:39] = pos.transpose()
         X[39:42] = vel.transpose()
 
@@ -217,7 +218,8 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
         m0_max:  DOUBLE: maximum mass from initiation step (prediction cant give higher masses)
         reverse: BOOL  : is this filter being performed from relative t_end to t0?
         eci_bool:BOOL  : unused in this dim option
-     """
+    """
+
     if X[6] < 0:
 
         X[35] = 0.
@@ -252,14 +254,16 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
     calc_time=[tkm1, tk]
 
     ##integration:
-    init_x[0:3] = X[36:39]
-    init_x[3:6] = X[39:42]
+    init_x[0:3] = copy.deepcopy(X[36:39])
+    init_x[3:6] = copy.deepcopy(X[39:42])
 
     with bf.stdout_redirected():
         ode_output = scipy.integrate.odeint(bf.NL_state_eqn_3d, init_x, calc_time, args = (param,))    
 
     ## set new particle
     X[0:13] = ode_output[1]
+
+    T_jd = fireball_info[6] + TimeDelta(fireball_info[7], format='sec')
 
     ## discretisation of process noise covariance:
     Qc = copy.deepcopy(Q_c) 
@@ -352,14 +356,15 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
 
 
     ## Assign cartesian positions to correct reference frame index
-    T_jd = fireball_info[6].jd + fireball_info[7]/(3600*24)
-    X[36:39] = X[0:3] 
-    X[39:42] = X[3:6]
+    T_jd = fireball_info[6] + TimeDelta(fireball_info[7], format='sec')
+
+    X[36:39] = copy.deepcopy(X[0:3])
+    X[39:42] = copy.deepcopy(X[3:6])
 
     pos, vel = tu.ECI2ECEF(np.vstack((X[0], X[1], X[2])), 
                            np.vstack((X[3], X[4], X[5])), T_jd)
-    X[0:3] = pos.transpose()
-    X[3:6] = vel.transpose()
+    X[0:3] = copy.deepcopy(pos.transpose())
+    X[3:6] = copy.deepcopy(vel.transpose())
 
     ## get particle weight based on observations
     X[35], X[34] = Get_Weighting(X, obs_info, lum_info, N, t_end, m0_max,reverse, T_jd)
@@ -369,7 +374,7 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
     X[31] = lat
     X[32] = lon
     X[33] = alt
-
+    
     return X
 
 

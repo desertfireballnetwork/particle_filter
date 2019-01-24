@@ -488,7 +488,7 @@ def Fireball_Data(filenames, reverse=False):
                                       lat_col, lon_col, lat_col_deg, lon_col_deg, height_col, gamma, g_sin_gamma, pos_err]))
 
             if norm([x_col[0], y_col[0],z_col[0]]) > norm(x0):
-                x0 = [x_col[0], y_col[0], z_col[0]]
+                    x0 = [x_col[0], y_col[0], z_col[0]]
 
     # Stack the data packets 
     data = vstack(data_packet)                    
@@ -517,8 +517,8 @@ def Fireball_Data(filenames, reverse=False):
     else:
         lengths = [pow(float(data['X_geo'][i] - x0[0])**2 + float(data['Y_geo'][i] - x0[1])**2 + float(data['Z_geo'][i] - x0[2])**2, 1/2.) for i in range(len(data))]
         uv = np.array([[(data['X_geo'][-1] - x0[0]) / lengths[-1]], [(data['Y_geo'][-1] - x0[1]) / lengths[-1]], [(data['Z_geo'][-1] - x0[2]) / lengths[-1]]])
-    
 
+    print(lengths)
     dfs_col = Column(name='dist_from_start', data= lengths)
     data.add_column(dfs_col, index=1) 
     

@@ -230,7 +230,7 @@ def ParticleFilterParams(dim):
     if dim ==1:
         P = [150., 0., 0., 750., 0., 0.]
     else:
-        P = [150., 150., 150., 750., 750., 750.]
+        P = [50., 50., 50., 150., 150., 150.]
 
     ## Initialise state ranges
 
@@ -396,7 +396,7 @@ if __name__ == '__main__':
 
             ## get data depending on particle filter flavour
             # 1D filter:
-            P_test=0
+
             if dim == 1:
                 x0 = data['dist_from_start'][0]
 
@@ -413,34 +413,34 @@ if __name__ == '__main__':
                 out_name = data['datetime'][0].split('T')[0].replace('-','') + '_1D'
 
             else:
+                # data.sort('time')    
                 
-                if dim==2 or dim==4:   # 3D cartesian 
-                    ## t0 is start of filter, T0 is start of fireball
+                # if reverse:
+                #     data.reverse()
+                ## t0 is start of filter, T0 is start of fireball
 
-                    if dim==2:
-                        out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Dtriangulated'
-
-                        data.sort('time')    
-
-                        if 'X_eci' in data.colnames:
-                            print('Running in ECI')
-                            [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
-                                                   [(data['X_eci'][3] - data['X_eci'][0])/(data['time'][3] - data['time'][0]),
-                                                    (data['Y_eci'][3] - data['Y_eci'][0])/(data['time'][3] - data['time'][0]),
-                                                    (data['Z_eci'][3] - data['Z_eci'][0])/(data['time'][3] - data['time'][0])],
-                                                   t_stack]
-                        else:
-                            print('Running in ECEF')
-                            [x0, v0, date_info] = [[data['X_geo'][0], data['Y_geo'][0], data['Z_geo'][0]],
-                                                   [(data['X_geo'][3] - data['X_geo'][0])/(data['time'][3] - data['time'][0]),
-                                        
+                if 'X_eci' in data.colnames:
+                    print('Running in ECI')
+                    [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
+                                           [(data['X_eci'][3] - data['X_eci'][0])/(data['time'][3] - data['time'][0]),
+                                            (data['Y_eci'][3] - data['Y_eci'][0])/(data['time'][3] - data['time'][0]),
+                                            (data['Z_eci'][3] - data['Z_eci'][0])/(data['time'][3] - data['time'][0])],
+                                           t_stack]
+                else:
+                    print('Running in ECEF')
+                    [x0, v0, date_info] = [[data['X_geo'][0], data['Y_geo'][0], data['Z_geo'][0]],
+                                           [(data['X_geo'][1] - data['X_geo'][0])/(data['time'][1] - data['time'][0]),
+                                
 
 
-                                                    (data['Y_geo'][3] - data['Y_geo'][0])/(data['time'][3] - data['time'][0]),
-                                                    (data['Z_geo'][3] - data['Z_geo'][0])/(data['time'][3] - data['time'][0])],
-                                                   t_stack]
-                        
-                        
+                                            (data['Y_geo'][1] - data['Y_geo'][0])/(data['time'][1] - data['time'][0]),
+                                            (data['Z_geo'][1] - data['Z_geo'][0])/(data['time'][1] - data['time'][0])],
+                                           t_stack]
+                    
+                    
+                
+                if dim==2:
+                    out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Dtriangulated'
 
                 elif dim==3 :  # 3D rays
                     if n_obs>1:
@@ -448,10 +448,10 @@ if __name__ == '__main__':
                         # data, t0, T0, eci_bool = bf.Geo_Fireball_Data(filenames, pse, reverse)
                         out_name = data['datetime'][0].split('T')[0].replace('-','') + '_3Draw'
                         
-                        data.sort('time')    
-                        if reverse:
-                            data.reverse()
-                        [x0, v0, x0_err, v0_err, date_info] = bf.RoughTriangulation(data, t0, reverse, eci_bool)
+                        
+                        
+                        ## TODO: make this work!
+                        #[x0, v0, x0_err, v0_err, date_info] = bf.RoughTriangulation(data, t0, reverse, eci_bool)
 
 
                     else: 
@@ -459,17 +459,12 @@ if __name__ == '__main__':
                         exit(1)
                 else:
                     print('invalid dimension key -i')
-                    exit(1)
-
-                
-            ## define list of unique timesteps and their locations in data table
-            data.sort('time')                    
+                    exit(1)                  
 
             if reverse: 
-                date_info = np.append(t_stack, Time(data['datetime'][0], format='isot', scale='utc'))
-                data.reverse()
-            else: 
-                date_info = np.append(t_stack, T0) 
+                out_name = out_name + "_rev"
+
+            date_info = np.append(t_stack, T0) 
 
             data_times = data['time']
 
@@ -561,7 +556,7 @@ if __name__ == '__main__':
         elif dim == 3:
             import full_3d_ECI as df
             
-        [Q_c, Q_c_frag, P,  range_params] = ParticleFilterParams()
+        [Q_c, Q_c_frag, P,  range_params] = ParticleFilterParams(dim)
 
 
         p_all = None
@@ -582,7 +577,7 @@ if __name__ == '__main__':
     comm.Scatterv(p_all, p_working, root=0)
 
     for i in range(n):
-        p_working[i, :] = df.Initialise(x0, v0, rank*n+i, rank*n+i, N, P, range_params, alpha, date_info, mass_opt, m0_max, data['gamma'][0], eci_bool)
+        p_working[i, :] = df.Initialise(x0, v0, rank*n+i, rank*n+i, N, P, range_params, alpha, date_info, float(data_t[0,0]), mass_opt, m0_max, data['gamma'][0], eci_bool, reverse)
 
     comm.Gatherv( p_working, p_all, root=0)
     
@@ -769,10 +764,11 @@ if __name__ == '__main__':
         if rank ==0:
             print('iteration is: ', t, 'of', T-1, 'at time:', tk)
 
+
             # find the indices of the data in the data table that correspond to the current time
+
             obs_index_st = int(data_t[2, t])
             obs_index_ed = int(data_t[2, int(t+1)]) if len(data_t[0])> t+1 else int(len(data))
-            
             # determine if there are luminosity values available
             lum_info = []
             for i in range(obs_index_st, obs_index_ed):
@@ -787,7 +783,7 @@ if __name__ == '__main__':
                     obs_info[i,:]  = [data['dist_from_start'][i+obs_index_st], data['cross_track_error'][i+obs_index_st]]
                 fireball_info= [data['Lat_rad'][obs_index_st], data['Lon_rad'][obs_index_st], data['height'][obs_index_st],  date_info[0], date_info[1], date_info[2]+tk, data['g_sin_gamma'][obs_index_st]] 
                 
-            elif dim == 2 or dim == 4:  # 3D cardesian
+            elif dim == 2:  # 3D cardesian
                 obs_info = np.zeros((obs_index_ed - obs_index_st, 6))
                 if eci_bool:
                     for i in range(0, obs_index_ed-obs_index_st):
@@ -835,7 +831,6 @@ if __name__ == '__main__':
                 p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c_frag, m0_max, reverse, eci_bool)
         else:
             for i in range(n):
-
                 p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c, m0_max, reverse, eci_bool)
 
         comm.Gatherv( p_working, p_all, root=0)
@@ -843,6 +838,7 @@ if __name__ == '__main__':
     ##########  Master calculates weights and resamples ########
         if rank ==0:
             print('master collected all ')
+
             ## TIMER
             #t_4 = timeit.default_timer()-t_pfstart
             #print('time to integrate', t_4)

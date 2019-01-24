@@ -83,7 +83,7 @@ from astropy.time import TimeDelta
 import bf_functions_3d as bf
 import trajectory_utilities as tu
 
-def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False, uv_ECEF=[], x0_ECEF=[]):
+def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, T0, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False, reverse=False, uv_ECEF=[], x0_ECEF=[]):
     """ create a random particle to represent a meteoroid - 
         random distance along path, mass, velocity, ablation parameter 
         and shape-density parameter are created with Q_c noise
