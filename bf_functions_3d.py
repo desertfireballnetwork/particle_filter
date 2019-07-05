@@ -276,7 +276,7 @@ def RoughTriangulation(data, t0, rev=False, eci_bool=False):
 
     # Crop to only n data points
     if rev:  # if running in reverse, take last points.
-        T_rel_crop = T_rel_plus[-n:]
+        T_rel_crop = T_rel_plus[-n-1:]
         CroppedData = data[data['time'] >= np.min(T_rel_crop)]
     else:  # if running forward, take first points.
         T_rel_crop = T_rel_plus[:n]
@@ -286,6 +286,9 @@ def RoughTriangulation(data, t0, rev=False, eci_bool=False):
     CroppedData['azimuth'] = np.rad2deg(CroppedData['azimuth'])
 
     # Find the ECEF positions of n paired data points
+    if rev:
+        CroppedData.reverse()
+        T_rel_crop[::-1]
     Pos_pw = PointTriangulation(CroppedData)[0] #[3,n]
 
     # Pos_pw from PointTriangulation is positions in ECEF. 
@@ -302,7 +305,7 @@ def RoughTriangulation(data, t0, rev=False, eci_bool=False):
 
     # Pack variables and least square them
     X_est = np.ones(7); X_est[:3] = Pos_pw[:,0]
-    if rev: X_est[:3] = Pos_pw[:,-1]
+    # if rev: X_est[:3] = Pos_pw[:,-1]
 
     [X, X_cov_reduced, infodict] = leastsq(residuals, X_est, 
                 args=(Pos_pw, T_rel_crop - t0), full_output=True)[:3]
@@ -316,8 +319,6 @@ def RoughTriangulation(data, t0, rev=False, eci_bool=False):
     # Unpack mean and std variables
     x0 = np.vstack((X[:3])); x0_err = np.vstack((X_std[:3]))
     v0 = np.vstack((X[3:6])); v0_err = np.vstack((X_std[3:6]))
-
-
 
     return x0, v0, x0_err, v0_err, atm_info
 
@@ -389,8 +390,8 @@ def Geo_Fireball_Data(filenames, pse, reverse=False):
         ## altitude and azimuth data with errors
         alt_col = Column(name='altitude', data=alt)
         azi_col = Column(name='azimuth', data=azi)
-        alt_err_col = Column(name='R_alt', data=np.deg2rad(Data['err_plus_altitude']))#data=np.ones(len(alt))*np.deg2rad(5/60)) #  data=np.deg2rad(Data['err_plus_altitude']))
-        azi_err_col = Column(name='R_azi', data=np.deg2rad(Data['err_plus_azimuth']))
+        alt_err_col = Column(name='R_alt', data=np.ones(len(alt))*np.deg2rad(5/60)) #  data=np.deg2rad(Data['err_plus_altitude']))#data=np.deg2rad(Data['err_plus_altitude']))
+        azi_err_col = Column(name='R_azi', data=np.ones(len(alt))*np.deg2rad(5/60)) #np.deg2rad(Data['err_plus_azimuth']))
         
         ## check if SLLS has been run in ECI:
         if 'X_eci' in Data.colnames:
@@ -431,10 +432,9 @@ def Geo_Fireball_Data(filenames, pse, reverse=False):
 
             ## errors in position calculated from triangulation (Note: only taken the positive errors)
             ## TODO currently these are fixed at 100m. Replace with commened out end-of-line text to import from file
-            fix_error = 50.
-            x_err_col = Column(name='R_X_geo', data=np.ones(len(Data['datetime'])) * fix_error) #Data['X_err_plus'])
-            y_err_col = Column(name='R_Y_geo', data=np.ones(len(Data['datetime'])) * fix_error) #Data['Y_err_plus'])#data=np.ones(len(alt))*np.deg2rad(5/60)) #  data=np.deg2rad(Data['err_plus_altitude']))
-            z_err_col = Column(name='R_Z_geo', data=np.ones(len(Data['datetime'])) * fix_error) #Data['Z_err_plus'])
+            x_err_col = Column(name='R_X_geo', data=np.ones(len(Data['datetime'])) * Data['cross_track_error'])#X_err_plus'])
+            y_err_col = Column(name='R_Y_geo', data=np.ones(len(Data['datetime'])) * Data['cross_track_error'])#Y_err_plus'])#data=np.ones(len(alt))*np.deg2rad(5/60)) #  data=np.deg2rad(Data['err_plus_altitude']))
+            z_err_col = Column(name='R_Z_geo', data=np.ones(len(Data['datetime'])) * Data['cross_track_error'])#Z_err_plus'])
 
             ## velocities calculated by triangulation script positions with time. 
             ddt = Column(name='D_DT', data=Data['D_DT_geo'])  # vel norm
@@ -460,37 +460,37 @@ def Geo_Fireball_Data(filenames, pse, reverse=False):
         gamma = Column(name='gamma', data=temp)
 
         ## check whether there is a velocity column to import and import data whether complete or nan values.
-        if dfn_utils.is_type_pipeline(All_Raw_Data, 'absolute_photometric'):
-            print('Luminosity values detected')
+        # if dfn_utils.is_type_pipeline(All_Raw_Data, 'absolute_photometric'):
+        #     print('Luminosity values detected')
 
-            t = Time(All_Raw_Data['datetime'])
-            rel_t = (t - t[0]).sec
-            # create missing values mask
-            w = np.isnan(All_Raw_Data['M_V'])
+        #     t = Time(All_Raw_Data['datetime'])
+        #     rel_t = (t - t[0]).sec
+        #     # create missing values mask
+        #     w = np.isnan(All_Raw_Data['M_V'])
 
-            # create interpolator using only valid input
-            interp_magnitudes = interpolate.interp1d(rel_t[~w], All_Raw_Data['M_V'][~w],  bounds_error=False)
-            #interp_luminosity = interpolate.interp1d(rel_t[~w], All_Raw_Data['I'][~w],  bounds_error=False) # Depreciated. If you want I's, calculate and add ;)
+        #     # create interpolator using only valid input
+        #     interp_magnitudes = interpolate.interp1d(rel_t[~w], All_Raw_Data['M_V'][~w],  bounds_error=False)
+        #     #interp_luminosity = interpolate.interp1d(rel_t[~w], All_Raw_Data['I'][~w],  bounds_error=False) # Depreciated. If you want I's, calculate and add ;)
 
-            # overwrite values  
-            All_Raw_Data['M_V'] = interp_magnitudes(rel_t)
-            #All_Raw_Data['I'] = interp_luminosity(rel_t) # Depreciated. If you want I's, calculate and add ;)
+        #     # overwrite values  
+        #     All_Raw_Data['M_V'] = interp_magnitudes(rel_t)
+        #     #All_Raw_Data['I'] = interp_luminosity(rel_t) # Depreciated. If you want I's, calculate and add ;)
 
-            if pse != 'both':
-                Data['M_V'] = All_Raw_Data['M_V'][All_Raw_Data['dash_start_end'] == pse ]
-                #Data['I'] = All_Raw_Data['I'][All_Raw_Data['dash_start_end'] == pse ]  # Depreciated. If you want I's, calculate and add ;)
-            else:
-                Data['M_V'] = All_Raw_Data['M_V']
-                #Data['I'] = All_Raw_Data['I']# Depreciated. If you want I's, calculate and add ;)
+        #     if pse != 'both':
+        #         Data['M_V'] = All_Raw_Data['M_V'][All_Raw_Data['dash_start_end'] == pse ]
+        #         #Data['I'] = All_Raw_Data['I'][All_Raw_Data['dash_start_end'] == pse ]  # Depreciated. If you want I's, calculate and add ;)
+        #     else:
+        #         Data['M_V'] = All_Raw_Data['M_V']
+        #         #Data['I'] = All_Raw_Data['I']# Depreciated. If you want I's, calculate and add ;)
 
-            mag_col = Column(name='magnitude', data=Data['M_V'])
-            #lum_col = Column(name='luminosity', data=Data['I'])
-            mag_err = Column(name='mag_error', data=np.ones(len(Data['datetime'])) *0.5) # TODO currently luminosity error is fixed at 0.5 Magnitudes
+        #     mag_col = Column(name='magnitude', data=Data['M_V'])
+        #     #lum_col = Column(name='luminosity', data=Data['I'])
+        #     mag_err = Column(name='mag_error', data=np.ones(len(Data['datetime'])) *0.5) # TODO currently luminosity error is fixed at 0.5 Magnitudes
 
-        else:
-            mag_col = Column(name='magnitude', data=np.ones(len(Data['datetime'])) * np.nan)
-            #lum_col = Column(name='luminosity', data=np.ones(len(Data['datetime'])) * np.nan)
-            mag_err = Column(name='mag_error', data=np.ones(len(Data['datetime'])) * np.nan)
+        # else:
+        mag_col = Column(name='magnitude', data=np.ones(len(Data['datetime'])) * np.nan)
+        #lum_col = Column(name='luminosity', data=np.ones(len(Data['datetime'])) * np.nan)
+        mag_err = Column(name='mag_error', data=np.ones(len(Data['datetime'])) * np.nan)
 
         if 'ballistic_entry_mass_all' in All_Raw_Data.meta:
             alpha = All_Raw_Data.meta['ballistic_alpha_all']
@@ -888,13 +888,14 @@ def DFS_Fireball_Data(filenames, pse, reverse=False):
     data.sort('time')
 
 
-    if eci_bool:    
+    if 'X_eci' in Data.colnames:
         lengths = [pow(float(data['X_eci'][i] - x0[0])**2 + float(data['Y_eci'][i] - x0[1])**2 + float(data['Z_eci'][i] - x0[2])**2, 1/2.) for i in range(len(data))]
         uv = np.array([[(data['X_eci'][-1] - x0[0]) / lengths[-1]], [(data['Y_eci'][-1] - x0[1]) / lengths[-1]], [(data['Z_eci'][-1] - x0[2]) / lengths[-1]]])
+        eci_bool = True
     else:
         lengths = [pow(float(data['X_geo'][i] - x0[0])**2 + float(data['Y_geo'][i] - x0[1])**2 + float(data['Z_geo'][i] - x0[2])**2, 1/2.) for i in range(len(data))]
         uv = np.array([[(data['X_geo'][-1] - x0[0]) / lengths[-1]], [(data['Y_geo'][-1] - x0[1]) / lengths[-1]], [(data['Z_geo'][-1] - x0[2]) / lengths[-1]]])
-    
+        eci_bool = False
 
     dfs_col = Column(name='dist_from_start', data= lengths)
     data.add_column(dfs_col, index=1) 
@@ -914,7 +915,7 @@ def DFS_Fireball_Data(filenames, pse, reverse=False):
     data.add_column(Column(name='alpha', data=np.ones(len(data['datetime'])) * alpha))     
     data.add_column(Column(name='beta', data=np.ones(len(data['datetime'])) * beta)) 
 
-    return data, t0
+    return data, t0, eci_bool
 
 
             # Compute distance from start along line of trajectory

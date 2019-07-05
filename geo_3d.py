@@ -78,8 +78,8 @@ from astropy.time import TimeDelta
 import bf_functions_3d as bf
 import trajectory_utilities as tu
 
-def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False):
-        """ create a random particle to represent a meteoroid - 
+def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3, m0_max=2000., gamma= 0.7854, eci_bool=False, fix_params=False):
+    """ create a random particle to represent a meteoroid - 
         random distance along path, mass, velocity, ablation parameter 
         and shape-density parameter are created with Q_c noise
         according to global set ranges
@@ -125,45 +125,55 @@ def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3
         X[39:42] = copy.deepcopy(X[3:6])    # set X, Y, Z  ECI velocities 
         
         ## convert X, Y, Z positions from ECI to ECEF for saving
+
         pos, vel = tu.ECI2ECEF(np.vstack((X[0], X[1], X[2])), np.vstack((X[3], X[4], X[5])), T_jd)
         X[0:3] = pos.transpose()
         X[3:6] = vel.transpose()
 
     else:
         ## convert X, Y, Z positions from ECEF to ECI and set. 
+
         pos, vel = tu.ECEF2ECI(np.vstack((X[0], X[1], X[2])), np.vstack((X[3], X[4], X[5])), T_jd)
         X[36:39] = pos.transpose()
         X[39:42] = vel.transpose()
+    if fix_params:
+        X[8] = 1.5    # shape
+        X[7] = 1.3    # cd
+        X[26] = 3500. # density
+        X[10] = 2* 0.014e-6 # ablation parameter
+        X[12] = 0.005       # tau - luminous efficiency coefficient
+        X[9] = X[8] * X[7]/pow(X[26], 2/3.)   # shape density coefficient
+        
+    else:
+        ## TODO: try and correlate shape and drag
+        X[8] = random.random() * (A_max - A_min) + A_min
+        X[7] = 1.3  #0.98182 * X[8]**2 - 1.7846 * X[8] + 1.6418
 
-    ## TODO: try and correlate shape and drag
-    X[8] = random.random() * (A_max - A_min) + A_min
-    X[7] = 1.3  #0.98182 * X[8]**2 - 1.7846 * X[8] + 1.6418
+        ## choose a random meteor type
+        particle_choices = random.choice(random_meteor_type)
 
-    ## choose a random meteor type
-    particle_choices = random.choice(random_meteor_type)
+        ## use corresponding density range for given meteoroid body type
+        X[26] = random.gauss(pm_mean[particle_choices], pm_std[particle_choices])
 
-    ## use corresponding density range for given meteoroid body type
-    X[26] = random.gauss(pm_mean[particle_choices], pm_std[particle_choices])
+        ## calculate shape-density coefficient (kappa = A * cd / density^(2/3.)
+        X[9]  = X[8] * X[7]/pow(X[26], 2/3.) 
+        
+        ## TODO: abalation coefficient
+        ## values for sigma are supposedly correlated to density
+        ## ranges here are taken from table 17 of Ceplecha 1998
+        # if X[26] > 5000:
+        #     X[10] = random.gauss(0.07e-6, 0.01e-6)
+        # elif X[26] > 2500:
+        #     X[10] = random.gauss(0.014e-6, 0.005e-6)
+        # elif X[26] > 1500:
+        #     X[10] = random.gauss(0.042e-6, 0.005e-6)
+        # else:
+        #     X[10] = random.gauss(0.1e-6, 0.05e-6)
+        X[10] = 2* 0.014e-6
 
-    ## calculate shape-density coefficient (kappa = A * cd / density^(2/3.)
-    X[9]  = X[8] * X[7]/pow(X[26], 2/3.) 
-    
-    ## TODO: abalation coefficient
-    ## values for sigma are supposedly correlated to density
-    ## ranges here are taken from table 17 of Ceplecha 1998
-    # if X[26] > 5000:
-    #     X[10] = random.gauss(0.07e-6, 0.01e-6)
-    # elif X[26] > 2500:
-    #     X[10] = random.gauss(0.014e-6, 0.005e-6)
-    # elif X[26] > 1500:
-    #     X[10] = random.gauss(0.042e-6, 0.005e-6)
-    # else:
-    #     X[10] = random.gauss(0.1e-6, 0.05e-6)
-    X[10] = 2* 0.014e-6
-
-    # curently luminous efficiency is set to be randomised between typical ranges
-    # TODO: investigate calculations for luminous efficiency and determine applicaility
-    X[12] = random.random() * (tau_max - tau_min) + tau_min
+        # curently luminous efficiency is set to be randomised between typical ranges
+        # TODO: investigate calculations for luminous efficiency and determine applicaility
+        X[12] = random.random() * (tau_max - tau_min) + tau_min
 
     ## masses    
     if mass_opt == 1:   
@@ -196,7 +206,7 @@ def Initialise(x0, v0, index, oindex, N, P, params, alpha, date_info, mass_opt=3
 
 
 
-def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, index, N, frag, t_end, Q_c, m0_max, reverse=False, eci_bool=False):
+def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, index, N, frag, t_end, Q_c, m0_max, reverse=False, eci_bool=False, fix_params=False):
     """ performs non linear integration from tk to tk+1
         Inputs:
         X:       ARRAY : [1x42] Particle array
@@ -220,8 +230,12 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
      """    
 
     if X[6] < 0:
-        print(X)
-        raise ValueError('cannot have a negative mass')
+        X[35] = -5000.
+        X[34] = -5000.
+
+        return X
+        # print(X)
+        # raise ValueError('cannot have a negative mass')
 
     ###### Prediction #####
 
@@ -265,7 +279,7 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
     X[4] = X[4] + random.gauss(0, sqrt(abs(X[17]))) # y velocity
     X[5] = X[5] + random.gauss(0, sqrt(abs(X[18]))) # z velocity
     
-     if frag:
+    if frag:
         X[3] = rand_skew_norm(-3, X[3], sqrt(X[16])) # x velocity
         X[4] = rand_skew_norm(-3, X[4], sqrt(X[17])) # y velocity
         X[5] = rand_skew_norm(-3, X[5], sqrt(X[18])) # z velocity
@@ -287,9 +301,10 @@ def particle_propagation(X, mu, tkm1, tk, fireball_info, obs_info, lum_info, ind
             
             X[6] = rand_skew_norm(-3, X[6], sqrt(abs(X[19]))) 
         
-    X[9] = X[9] + random.gauss(0, sqrt(abs(X[22]))) # kappa
-    X[10] = X[10] + random.gauss(0, sqrt(abs(X[23]))) # sig
-    X[12] = X[12] + random.gauss(0, sqrt(abs(X[25]))) # tau
+    if not fix_params:
+        X[9] = X[9] + random.gauss(0, sqrt(abs(X[22]))) # kappa
+        X[10] = X[10] + random.gauss(0, sqrt(abs(X[23]))) # sig
+        X[12] = X[12] + random.gauss(0, sqrt(abs(X[25]))) # tau
 
    # get veolocity magnitude (vel norm)
     vel = norm([X[3], X[4], X[5]])

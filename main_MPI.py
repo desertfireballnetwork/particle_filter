@@ -41,7 +41,7 @@ available.
                                    required) 
 
 Inputs: required:
-        -i --dimension: select from (1) (2) or (3) described 
+        -i --run_option: select from (1) (2) or (3) described 
              above.
         -d --inputdirectory: input directory of folder 
              containing files with extension .ecsv
@@ -176,7 +176,7 @@ from mpi4py import MPI
 
 
 
-def ParticleFilterParams():
+def ParticleFilterParams(fix_params=False):
     """ returns particle filter function parameters. 
         Q_c:      process noise variances as a row vector
         Q_c_frag: process noise variances as a row vector if there is a fragmentation event 
@@ -197,8 +197,8 @@ def ParticleFilterParams():
     #              sigma_cov, shape_cov, brightness_cov, tau_cov]
     
 
-    Q_c = [2., 2., 2., 
-           50., 50., 50., 
+    Q_c = [10., 2., 2., 
+           150., 50., 50., 
            5., 0, 0,
            1e-3, 1e-10, 0., 0.0001]
 
@@ -264,6 +264,9 @@ def ParticleFilterParams():
     #range_params = [m0_max, A_mean, A_std, pm_mean, pm_std, random_meteor_type, cd_mean, cd_std, sigma_min, sigma_max, K_min, K_max, tau_min, tau_max]
     range_params = [A_min, A_max, pm_mean, pm_std, random_meteor_type, tau_min, tau_max]
 
+    if fix_params:
+    	Q_c[-4:] = [0., 0., 0., 0.]
+    	Q_c_frag[-4:] = [0., 0., 0., 0.]
     return Q_c, Q_c_frag, P,  range_params
 
 if __name__ == '__main__':
@@ -283,8 +286,10 @@ if __name__ == '__main__':
                 help="input directory of folder containing triangulated files with extension .ecsv", required=True)
         parser.add_argument("-p","--numparts",type=int,
                 help="number of particles to run. Must be an integer.", required=True)
-        parser.add_argument("-i","--dimension",type=int,
+        parser.add_argument("-i","--run_option",type=int,
                 help="would you like to run \n(1) 1D analysis on a single, pre-triangulated trajectory file, \n(2) 3D analysis on multiple pre-triangulated files, \n(3) 3D analysis on calibrated raw observations in ECI, \n(4) 3D analysis on pointwise data",required=True)
+        parser.add_argument("-fix","--fix_para",action="store_true",
+                help="fix shape and density to broick and chondrite?",default=False)
         parser.add_argument("-c","--comment",type=str,
                 help="add a version name to appear in saved file titles. If unspecified, _testing_ is used.",default='testing')
         parser.add_argument("-f","--fragment",action="store_true",
@@ -311,12 +316,13 @@ if __name__ == '__main__':
 
         args = parser.parse_args()   
 
-        dim = int(args.dimension)
+        dim = int(args.run_option)
         #alpha_cam = int(args.alpha)
         mass_opt = int(args.mass_option)
         m0_max = float(args.m0_max)
         prev_file = args.old
         reverse = args.time_reverse
+        fix_params = args.fix_para
 
         import trajectory_utilities as tu
 
@@ -412,7 +418,7 @@ if __name__ == '__main__':
             ## get data depending on particle filter flavour
             # 1D filter:
             if dim == 1:
-                [data, date_info] = bf.DFS_Fireball_Data(filenames, pse, reverse)
+                [data, date_info, eci_bool] = bf.DFS_Fireball_Data(filenames, pse, reverse)
 
                 x0 = data['dist_from_start'][0]
                 v0 = data['D_DT'][1]    # currently first data point has a nan velocity, so use second as close approximation.
@@ -438,24 +444,27 @@ if __name__ == '__main__':
                         s = float(yday[2]) * 60 * 60 + float(yday[3]) * 60 + float(yday[4])
                         t_stack = np.vstack((y, d, s))
                         data.sort('time')    
+                        
 
                         if 'X_eci' in data.colnames:
                             print('Running in ECI')
                             [x0, v0, date_info] = [[data['X_eci'][0], data['Y_eci'][0], data['Z_eci'][0]],
-                                                   [(data['X_eci'][3] - data['X_eci'][0])/(data['time'][3] - data['time'][0]),
-                                                    (data['Y_eci'][3] - data['Y_eci'][0])/(data['time'][3] - data['time'][0]),
-                                                    (data['Z_eci'][3] - data['Z_eci'][0])/(data['time'][3] - data['time'][0])],
+                                                   [(data['X_eci'][2] - data['X_eci'][0])/(data['time'][2] - data['time'][0]),
+                                                    (data['Y_eci'][2] - data['Y_eci'][0])/(data['time'][2] - data['time'][0]),
+                                                    (data['Z_eci'][2] - data['Z_eci'][0])/(data['time'][2] - data['time'][0])],
                                                    t_stack]
                         else:
                             print('Running in ECEF')
                             [x0, v0, date_info] = [[data['X_geo'][0], data['Y_geo'][0], data['Z_geo'][0]],
-                                                   [(data['X_geo'][3] - data['X_geo'][0])/(data['time'][3] - data['time'][0]),
+                                                   [(data['X_geo'][2] - data['X_geo'][0])/(data['time'][2] - data['time'][0]),
                                         
 
 
-                                                    (data['Y_geo'][3] - data['Y_geo'][0])/(data['time'][3] - data['time'][0]),
-                                                    (data['Z_geo'][3] - data['Z_geo'][0])/(data['time'][3] - data['time'][0])],
+                                                    (data['Y_geo'][2] - data['Y_geo'][0])/(data['time'][2] - data['time'][0]),
+                                                    (data['Z_geo'][2] - data['Z_geo'][0])/(data['time'][2] - data['time'][0])],
                                                    t_stack]
+
+                        
                         
                         if reverse: date_info = np.append(date_info, Time(data['datetime'][0], format='isot', scale='utc'))
                         else: date_info = np.append(date_info, T0)
@@ -502,7 +511,7 @@ if __name__ == '__main__':
                         print('you need at least two camera files for your choice of -i option.')
                         exit(1)
                 else:
-                    print('invalid dimension key -i')
+                    print('invalid run option key -i')
                     exit(1)
 
                 
@@ -580,7 +589,7 @@ if __name__ == '__main__':
         [Q_c, Q_c_frag, P,  range_params] = ParticleFilterParams()
         ## grouping everything to send
         alpha = data['alpha'][0]
-        init_info = [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name]
+        init_info = [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name, fix_params]
     
         ## send it all ranks
         for i in range(1, size):
@@ -591,7 +600,7 @@ if __name__ == '__main__':
         #print('time to initialise code', t_1)
 
     else:
-        [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name] = comm.recv(source=0)
+        [version, T, n, N, data_t, data, x0, v0, out_name, f, t_frag, dim, l_weight, alpha, mass_opt, m0_max, reverse, date_info, eci_bool, eci_name, fix_params] = comm.recv(source=0)
         if dim == 1:
             import geo_1d as df
         elif dim == 2 or dim == 4:
@@ -619,7 +628,7 @@ if __name__ == '__main__':
     comm.Scatterv(p_all, p_working, root=0)
 
     for i in range(n):
-        p_working[i, :] = df.Initialise(x0, v0, rank*n+i, rank*n+i, N, P, range_params, alpha, date_info, mass_opt, m0_max, data['gamma'][0], eci_bool)
+        p_working[i, :] = df.Initialise(x0, v0, rank*n+i, rank*n+i, N, P, range_params, alpha, date_info, mass_opt, m0_max, data['gamma'][0], eci_bool, fix_params)
 
     comm.Gatherv( p_working, p_all, root=0)
     
@@ -870,11 +879,11 @@ if __name__ == '__main__':
         # non-linear integration of state, model covariance and then calculates particle likelihood
         if frag: 
             for i in range(n):
-                p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c_frag, m0_max, reverse, eci_bool)
+                p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c_frag, m0_max, reverse, eci_bool, fix_params)
         else:
             for i in range(n):
 
-                p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c, m0_max, reverse, eci_bool)
+                p_working[i, :] = df.particle_propagation(p_working[i], 2/3., tkm1, tk, fireball_info, obs_info, lum_info, rank*n+i, N, frag, t_end, Q_c, m0_max, reverse, eci_bool, fix_params)
 
         comm.Gatherv( p_working, p_all, root=0)
 
@@ -928,7 +937,7 @@ if __name__ == '__main__':
                 weights_sum_p = np.log(np.sum([ np.exp(i - mx_p) for i in w[0, :]])) + mx_p     
                 weights_sum_l = np.log(np.sum([ np.exp(i - mx_l) for i in w[1, :]])) + mx_l       
                 #weights_sqr_sum = sum(w[0, :]**2)
-                # print(mx_p, mx_l, weights_sum_p, weights_sum_l)
+                print(mx_p, mx_l, weights_sum_p, weights_sum_l)
 
 
                 # l_weight = False
@@ -972,12 +981,16 @@ if __name__ == '__main__':
                 print('sum of weights: ', weights_sum)
                 print('effectiveness: ', n_eff/ N * 100, '%')
 
-                ## resampling
-                draw = np.random.uniform(0, 1 , N)
-                index = np.searchsorted(w[6, :], draw, side='left')
-                # print(w[7], index,N)
-                p2 = np.asarray([p_all[int(w[7, index[j]])]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
 
+                ## resampling
+                # print(w)
+                draw = np.random.uniform(0, 1 , N)
+                index = np.searchsorted(w[6, :], draw, side='right')
+                # print(w[7], index,N)
+
+                p2 = np.asarray([p_all[int(w[7, index[j]])]  for j in range(N)]) # saved in a new array so that nothing is overwritten. 
+                # print(p2)
+                # print(w)
                 #p2[:, 29] = np.asarray([w[4, w[7, index[j]]]  for j in range(N)]) 3 should do the same as line "p_all[:, 29] = w[4, :]"
                 mx = max(p2[:, 29])
                 weights_sum = np.log(np.sum([ np.exp(i - mx) for i in p2[:, 29]])) + mx
@@ -997,11 +1010,11 @@ if __name__ == '__main__':
 
             for i in range(N):
                 ## if printing averages to terminal,, uncomment next 6 lines:
-                avg_vel += np.linalg.norm([p_all[i, 3], p_all[i, 4], p_all[i, 5]]) *  p2[i, 29]
-                avg_mass += p_all[i, 6] *  p2[i, 29]
-                avg_kappa += p_all[i, 9] *  p2[i, 29]
-                avg_sigma += p_all[i, 10] *  p2[i, 29]
-                avg_mag += p_all[i, 11] *  p2[i, 29]
+                avg_vel += np.linalg.norm([p_all[i, 3], p_all[i, 4], p_all[i, 5]]) *  p_all[i, 29]
+                avg_mass += p_all[i, 6] *  p_all[i, 29]
+                avg_kappa += p_all[i, 9] *  p_all[i, 29]
+                avg_sigma += p_all[i, 10] *  p_all[i, 29]
+                avg_mag += p_all[i, 11] *  p_all[i, 29]
             
             print('mean velocity: ', avg_vel )       
             print('mean mass: ', avg_mass)
